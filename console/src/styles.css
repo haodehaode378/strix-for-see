@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "Geist Variable", "Segoe UI", sans-serif;
+  color: #15211f;
+  background: #f3f5f4;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --canvas: #f3f5f4;
+  --surface: #ffffff;
+  --surface-raised: #f8faf9;
+  --surface-muted: #edf1ef;
+  --border: #d7dfdc;
+  --border-strong: #bdcac6;
+  --text: #15211f;
+  --text-muted: #5d6d68;
+  --accent: #19856f;
+  --accent-strong: #116c5a;
+  --accent-soft: #dff4ed;
+  --danger: #c34f4f;
+  --warning: #b67521;
+}
+
+:root[data-theme="dark"] {
+  color: #e8efec;
+  background: #101615;
+  --canvas: #101615;
+  --surface: #161d1b;
+  --surface-raised: #1b2421;
+  --surface-muted: #222d2a;
+  --border: #2a3733;
+  --border-strong: #3b4a46;
+  --text: #e8efec;
+  --text-muted: #94a49f;
+  --accent: #4ab99e;
+  --accent-strong: #63c8b0;
+  --accent-soft: #173a32;
+  --danger: #e37979;
+  --warning: #dfa65d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--canvas);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34rem),
+    var(--canvas);
+  color: var(--text);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.nav-scroll {
+  scrollbar-width: none;
+}
+
+.nav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

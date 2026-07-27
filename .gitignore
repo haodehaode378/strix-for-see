@@ -3,6 +3,15 @@
 node_modules/
 strix/viewer/frontend/node_modules/
 strix/viewer/frontend/.vite/
+console/dist/
+console/src-tauri/target/
+console/control-service/.venv*/
+console/control-service/.pytest_cache/
+console/src-tauri/gen/
+console/src-tauri/icons/android/
+console/src-tauri/icons/ios/
+console/src-tauri/icons/icon.icns
+.playwright-cli/
 
 # Python
 __pycache__/

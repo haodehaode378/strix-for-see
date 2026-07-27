@@ -7,9 +7,10 @@ configuration, and CLI code grouped by subpackage. Tests live in `tests/`, docum
 `docs/`, container assets in `containers/`, and helpers in `scripts/`. The existing viewer is under
 `strix/viewer/frontend/`, with its generated bundle in `strix/viewer/static/`.
 
-The new Strix Console is an independent project. Do not import or extend the existing viewer UI;
-consult it only for behavior, event formats, and run-file parsing. Console requirements,
-architecture, and phases are documented in `docs/console/`.
+The new Strix Console lives in `console/` as an independent React/Tauri app with a Python control
+service. Do not import or extend the existing viewer UI; consult it only for behavior, event
+formats, and run-file parsing. Console requirements, architecture, and phases are in
+`docs/console/`.
 
 ## Development Commands
 
