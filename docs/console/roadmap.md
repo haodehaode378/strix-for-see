@@ -2,9 +2,10 @@
 
 ## Delivery Rules
 
-Implement one phase at a time from `develop`. Each phase uses a focused branch, contains tests and
-documentation, passes applicable build/lint/type checks, and is merged before dependent work starts.
-Do not combine phases in one commit or PR.
+Implement one phase at a time on `main`. Use focused commits, include tests and documentation, and
+pass applicable build/lint/type checks before pushing. Create a branch or pull request only when
+explicitly requested or when isolated collaborative work requires it. Do not combine unrelated
+phases in one commit.
 
 ## Phase 1: Contracts and Skeleton
 

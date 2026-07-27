@@ -33,20 +33,19 @@ success and failure paths.
 
 ## Branch, Commit & Pull Request Guidelines
 
-Treat `main` as stable and releasable. Use `develop` for daily integration; branch `feat/<topic>`,
-`fix/<topic>`, or `refactor/<topic>` from `develop` and merge back by PR. Create
-`release/<version>` branches for release freezes. `main` accepts PRs only from `develop` or
-`release/*`. Solo contributors may work directly on `develop` and merge completed phases to
-`main`.
+Use `main` for normal solo development and push focused, verified commits directly. Create
+`feat/<topic>`, `fix/<topic>`, or `refactor/<topic>` branches only when the user requests a branch,
+the work needs isolation, or multiple contributors are involved. Pull requests are optional unless
+explicitly requested.
 
 Write commits as `<type>: <中文简述>`, using lowercase `feat`, `fix`, `refactor`, `docs`, `test`,
 `chore`, or `style`. Put one space after the colon, keep the summary under 50 Chinese characters,
 and describe what changed and why. Keep one logical change per commit; add a body only when useful.
 
-Open or link an issue, explain the change and motivation, include reproduction or before/after
-evidence, and keep PRs focused. Before committing, run `uv run pytest` and `make check-all`; remove
-debug output, dead commented code, and hard-coded local paths. Include screenshots for viewer
-changes. Changes under `strix/viewer/frontend/` must include rebuilt `strix/viewer/static/` output.
+Before committing, explain the change and motivation, run relevant checks, and remove debug output,
+dead commented code, and hard-coded local paths. When a PR is used, keep it focused, link applicable
+issues, and include reproduction or before/after evidence. Include screenshots for viewer changes.
+Changes under `strix/viewer/frontend/` must include rebuilt `strix/viewer/static/` output.
 
 ## Security & Configuration
 
