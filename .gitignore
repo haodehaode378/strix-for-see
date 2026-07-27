@@ -93,3 +93,6 @@ Thumbs.db
 schema.graphql
 
 .opencode/
+
+# Local codebase analysis artifacts
+.ua/
