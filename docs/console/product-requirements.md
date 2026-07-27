@@ -1,80 +1,145 @@
 # Strix Console Product Requirements
 
-## Product Goal
+## Product Goal and Boundaries
 
-Build a local-first control and observability console for Strix. It should let an authorized
-operator configure a penetration test, launch or stop it, understand what autonomous Agents are
-doing, review validated findings, and reopen records stored on disk. The console is independent of
-the bundled Viewer and may only reuse its behavioral knowledge and data formats.
+Build `Strix Console` (`Strix 控制台`), a local-first Windows application for controlling and
+observing authorized Strix penetration tests. The React interface must work inside a Tauri desktop
+shell and from a local browser. It is independent of the bundled Viewer and may consult that code
+only for behavior, events, and run-file formats.
 
-The first release targets one local operator. Multi-user tenancy, cloud scheduling, organization
-permissions, and true pause/resume are out of scope.
+The first release serves one Windows user without login, cloud sync, telemetry, scheduling, or
+remote access. Docker Desktop is an external prerequisite; the application detects it and explains
+how to install or repair it. The desktop package bundles a compatible control service and Strix
+runtime, so users do not install Python or Strix separately.
+
+## Language and Appearance
+
+All user-facing copy, statuses, validation messages, dates, and reports support Simplified Chinese
+and English. The first launch follows the Windows display language: Chinese systems use Simplified
+Chinese and all others use English. Language changes apply immediately. Report language is selected
+separately.
+
+Use a professional security-console style. Dark is the default theme, with light and
+follow-Windows options. Avoid decorative “hacker” effects and fake progress percentages. Technical
+logs are collapsed by default.
 
 ## Core Business Objects
 
 | Object | Responsibility |
 | --- | --- |
-| `Scan` | Configuration and lifecycle of one penetration-test run |
-| `Target` | URL, IP address, local codebase, or remote repository in authorized scope |
-| `Agent` | Root or child worker, parent relationship, task, status, and last activity |
-| `Event` | Ordered state, message, finding, usage, error, or tool activity |
-| `ToolCall` | Tool name, safe input summary, status, duration, and output summary |
-| `Finding` | Severity, evidence, PoC, affected location, classification, and remediation |
-| `Runtime` | Sandbox backend, image, workspace, mounts, and health |
-| `Report` | Persisted Markdown, JSON, SARIF, or PDF artifact |
+| `Scan` | Configuration, queue position, and lifecycle of one run |
+| `Target` | One primary URL, local directory, Git repository, IP, or domain |
+| `Agent` | Root or child worker, parent, task, status, and last activity |
+| `Event` | Ordered lifecycle, message, finding, usage, error, or tool activity |
+| `ToolCall` | Tool name, redacted input/output summary, state, and duration |
+| `Finding` | Severity, evidence, PoC, affected location, workflow state, and remediation |
+| `Runtime` | Docker, sandbox image, workspace, mounts, network, and health |
+| `Report` | Local HTML, PDF, Markdown, or JSON artifact |
 | `SteeringMessage` | Operator instruction sent to an active scan |
 
 ## Information Architecture
 
-- `/dashboard`: active scans, recent high-risk findings, environment health, recent local runs,
-  and the primary create-scan action.
+- `/setup`: first-run readiness and guided remediation.
+- `/dashboard`: active/queued task, recent findings and runs, environment health, and create action.
 - `/scans/new`: guided scan creation.
-- `/scans`: filterable scan history.
-- `/scans/:id`: live or historical scan workspace.
-- `/local-runs`: disk-backed run records discovered from `strix_runs/`.
-- `/local-runs/:id`: read-only record details and available artifacts.
-- `/findings`: findings aggregated across runs.
-- `/settings`: safe defaults and provider/runtime configuration status.
-- `/system`: Docker, sandbox image, Strix version, disk, and diagnostic status.
+- `/scans` and `/scans/:id`: scan history and live/historical workspace.
+- `/local-runs` and `/local-runs/:id`: disk-backed records and artifacts.
+- `/findings`: findings aggregated across scans.
+- `/settings`: language, theme, providers, defaults, paths, notifications, and updates.
+- `/system/environment`: detailed checks, versions, storage, logs, and diagnostics.
+
+## Environment Readiness
+
+Check Docker CLI, daemon and version; WSL 2 and virtualization; control-service, Strix, and sandbox
+versions; model-provider configuration and connectivity; run-directory access; disk capacity; and
+optional Git capability. Every check shows required/optional status, detected value, impact,
+remediation, documentation, and a recheck action.
+
+A failed required check blocks new scans; an optional failure disables only that feature. Docker
+failure never blocks browsing local records. “Copy diagnostics” and diagnostic exports must redact
+secrets, usernames, and sensitive local paths.
 
 ## Create-Scan Flow
 
-1. Select one or more authorized targets.
-2. Choose Quick, Standard, Deep, or diff-scoped strategy and enter optional instructions.
-3. Select model/runtime settings, budget, timeout, and interactive steering.
-4. Validate target syntax, Docker, sandbox image, model connectivity, and required credentials.
-5. Review scope and authorization before launch.
+Each scan has one primary target. The first release supports a Web URL, local source directory,
+public Git repository, or IP/domain. Related API URLs, subdomains, credentials, and context may be
+attached to that target. Private Git authentication is deferred.
 
-Secrets remain in the control service. The browser displays only configured/not-configured status.
+1. Choose the target type and enter the primary target.
+2. Set allowed domains, IPs, ports, and paths plus explicit exclusions.
+3. Choose safe mode or full mode, request rate, timeout, budget, and instructions.
+4. Choose a configured model and optional authentication material.
+5. Validate the target, environment, model connectivity, scope, and credentials.
+6. Review the plan and acknowledge authorization before launch.
 
-## Scan Workspace
+Safe mode is the default. Full mode may submit forms, write data, or upload files and requires a
+second confirmation plus a persistent risk indicator. Authentication may include account/password,
+Cookie, Bearer token, custom headers, login steps, and client certificates. Secrets are never
+written into run files or displayed in full; “use once” secrets are removed after the task.
 
-The header shows target, lifecycle state, elapsed time, usage, cost, stop action, and steering
-entry. The workspace contains:
+Providers include OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints, and Ollama. Users can
+test connectivity and select a configured model per scan. Existing environment configuration may
+be detected for import without revealing the full secret.
 
-- **Overview**: current phase, completed milestones, risk summary, and recent activity.
-- **Agents**: parent/child topology, task, status, and last activity.
-- **Activity**: ordered messages, lifecycle changes, errors, and operator steering.
-- **Tools**: tool calls with duration and collapsed safe input/output summaries.
-- **Findings**: findings as they are discovered and validated.
-- **Runtime**: sandbox, workspace, mount, network, and health information.
-- **Report**: final narrative and available downloads.
+## Execution and Live Workspace
 
-Autonomous work has no trustworthy percentage. Progress is expressed through phase, milestones,
-active Agents, latest activity, findings, elapsed time, usage, and cost.
+The first release executes one scan at a time and queues the rest. Users can still browse records,
+reports, and edit queued tasks. The workspace header shows the target, lifecycle phase, elapsed
+time, usage, cost, stop controls, and steering input. Tabs include Overview, Agents, Activity,
+Tools, Findings, Runtime, and Report.
 
-## Local Records
+Progress uses phases, completed milestones, active Agents, current activity, findings, elapsed
+time, usage, and cost. Users may send additional instructions or adjust focus within the authorized
+scope. Safe stop preserves results; emergency termination is separately confirmed. Pause/resume is
+not offered until the engine can restore Agent and sandbox state.
 
-`/local-runs` indexes `strix_runs/` without changing its contents. It must distinguish active,
-completed, interrupted, partial, and malformed records. Each row shows run name, target, mode,
-state, timestamps, duration, model, cost, severity counts, artifact availability, and local path.
+Closing the window during a scan minimizes to the system tray. The tray exposes status, open, and
+stop actions. Windows notifications report completion, failure, and critical findings. Exiting
+during active work requires explicit confirmation.
 
-Users can filter, open details, reuse safe configuration, download artifacts, or request deletion.
-Deletion is destructive and requires the exact run to be resolved plus explicit confirmation.
-Malformed records remain visible with a parsing diagnostic instead of disappearing.
+## Findings and Reports
+
+Finding workflow is `pending -> confirmed -> accepted risk | fixed | false positive`. Store local
+notes and status history. Users can filter by target, severity, state, and date, and correlate the
+same issue across scans. Details include evidence, reproduction, affected location, and remediation.
+
+Export complete reports or individual findings as HTML, PDF, Markdown, or JSON in Chinese or
+English. Sensitive headers, paths, and tokens can be omitted. Email, cloud sharing, and scan archive
+import/export are not part of the first release.
+
+## Local Data and Records
+
+Store configuration, cache, logs, and diagnostics under `%LOCALAPPDATA%\StrixConsole\`; store new
+runs under `%LOCALAPPDATA%\StrixConsole\runs\` by default. Users may change the destination for new
+scans and add existing `strix_runs/` directories as read-only sources without moving them.
+
+The records UI distinguishes queued, active, completed, interrupted, partial, and malformed data.
+Malformed records remain visible with diagnostics. Users can open the containing folder and remove
+a source without deleting its files. Run deletion resolves an exact path, requires confirmation,
+and moves data to the Windows Recycle Bin by default.
+
+No data leaves the device. Logs rotate locally with a configurable retention period. Users can
+clear cache, logs, or all local data through progressively stronger confirmations. Uninstalling
+preserves scan records by default.
+
+## Distribution and Updates
+
+The first release is a Windows installer; a portable ZIP is deferred until installation and update
+flows stabilize. GitHub Releases for `haodehaode378/strix-for-see` is the stable-only application
+update channel. The desktop app, control service, and bundled Strix update as one tested version
+after user confirmation. Never update during an active scan, silently install, or automatically
+downgrade. A failed update preserves the working version.
+
+The Sandbox image updates independently from
+`ghcr.io/haodehaode378/strix-for-see-sandbox:<version>`. Show version, size, progress, disk impact,
+and compatibility. Do not replace an image used by an active scan or remove old images without
+confirmation. The first installer may be unsigned and must document the possible SmartScreen
+warning.
 
 ## MVP Acceptance
 
-The MVP includes environment checks, scan creation, start/stop, scan and local-run lists, live
-events, Agent status, tool activity, findings, steering, and report downloads. Cross-run analytics,
-multi-user access, remote deployment, scheduling, and pause/resume wait for later decisions.
+The MVP includes bilingual setup, environment checks, local secret configuration, scan creation
+and queueing, start/stop/terminate, live events, Agent and tool observability, steering, local
+records, finding workflow, report export, tray notifications, diagnostics, and confirmed updates.
+Multi-user access, cloud features, private Git credentials, scheduling, multiple concurrent scans,
+portable distribution, scan archive transfer, and pause/resume remain deferred.

@@ -1,73 +1,52 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Structure
 
-The Python package lives in `strix/`, with core orchestration, agents, runtime backends, reporting,
-tools, configuration, and CLI code in matching subpackages. Tests are focused modules in `tests/`.
-Documentation lives in `docs/`, container assets in `containers/`, and helpers in `scripts/`. The
-Vite/React viewer source is in `strix/viewer/frontend/`; its committed bundle is in
-`strix/viewer/static/`.
+Python source lives in `strix/`, with orchestration, agents, runtimes, tools, reporting,
+configuration, and CLI code grouped by subpackage. Tests live in `tests/`, documentation in
+`docs/`, container assets in `containers/`, and helpers in `scripts/`. The existing viewer is under
+`strix/viewer/frontend/`, with its generated bundle in `strix/viewer/static/`.
 
-## Build, Test, and Development Commands
+The new Strix Console is an independent project. Do not import or extend the existing viewer UI;
+consult it only for behavior, event formats, and run-file parsing. Console requirements,
+architecture, and phases are documented in `docs/console/`.
 
-- `make setup-dev`: install Python dependencies with `uv` and configure pre-commit hooks.
-- `uv run strix --target https://example.com`: run the CLI from the working tree.
-- `uv run pytest`: execute the full Python test suite; add a path such as
-  `tests/test_models.py` for a focused run.
-- `make check-all`: format, lint, type-check with mypy and Pyright, and run Bandit.
-- `make pre-commit`: run every configured hook across the repository.
-- `make viewer`: install frontend dependencies and rebuild `strix/viewer/static/`.
+## Development Commands
 
-## Coding Style & Naming Conventions
+- `make setup-dev`: install Python dependencies with `uv` and configure pre-commit.
+- `uv run strix --target https://example.com`: run Strix from the working tree.
+- `uv run pytest`: run all Python tests; append a test path for focused execution.
+- `make check-all`: format, lint, type-check, and run security checks.
+- `make pre-commit`: run all configured hooks.
+- `make viewer`: rebuild the existing viewer and committed static bundle.
 
-Use four-space indentation, type hints on all functions, and docstrings for public APIs. Ruff
-formats and lints Python with double quotes and a 100-character line limit. Use `snake_case` for
-modules, functions, and variables; `PascalCase` for classes; and descriptive test names beginning
-with `test_`. Follow existing React/TypeScript component conventions in the viewer.
+## Style and Testing
 
-## Testing Guidelines
+Use four-space Python indentation, type hints, and docstrings for public APIs. Ruff enforces double
+quotes and a 100-character line limit. Name modules and functions in `snake_case`, classes in
+`PascalCase`, and tests `test_<behavior>`. Add focused regression tests for behavior changes.
 
-Tests use `pytest` with `pytest-asyncio` in automatic mode. Add regression tests for behavior
-changes and keep fixtures self-contained. No numeric coverage threshold is configured; exercise
-success and failure paths.
+## Commits and Reviews
 
-## Branch, Commit & Pull Request Guidelines
+Work directly on `main` unless the user requests isolation or collaboration requires a branch.
+Write commits as `<type>: <中文简述>` with a lowercase `feat`, `fix`, `refactor`, `docs`, `test`,
+`chore`, or `style`. Keep the summary under 50 Chinese characters and each commit to one logical
+change. Run relevant checks before pushing. If a PR is requested, explain motivation, link issues,
+include evidence, and add screenshots for UI changes.
 
-Use `main` for normal solo development and push focused, verified commits directly. Create
-`feat/<topic>`, `fix/<topic>`, or `refactor/<topic>` branches only when the user requests a branch,
-the work needs isolation, or multiple contributors are involved. Pull requests are optional unless
-explicitly requested.
+## Console and Security Rules
 
-Write commits as `<type>: <中文简述>`, using lowercase `feat`, `fix`, `refactor`, `docs`, `test`,
-`chore`, or `style`. Put one space after the colon, keep the summary under 50 Chinese characters,
-and describe what changed and why. Keep one logical change per commit; add a body only when useful.
+- Target Windows with one React UI for Tauri and a local browser.
+- Support Simplified Chinese and English; never hard-code user-facing text.
+- Keep the control service loopback-only. Do not add login, cloud sync, remote access, or telemetry.
+- Store secrets in Windows Credential Manager and redact browser responses, logs, and diagnostics.
+- Treat local run files as authoritative and indexes as disposable.
+- Run one scan at a time; queue later tasks.
+- Show phases and real activity, never fabricated completion percentages.
+- Use HTTP for commands, resumable SSE for events, and POST for steering.
+- Do not claim pause/resume without real state restoration.
+- Never commit credentials, unauthorized target data, or `.ua/` artifacts.
 
-Before committing, explain the change and motivation, run relevant checks, and remove debug output,
-dead commented code, and hard-coded local paths. When a PR is used, keep it focused, link applicable
-issues, and include reproduction or before/after evidence. Include screenshots for viewer changes.
-Changes under `strix/viewer/frontend/` must include rebuilt `strix/viewer/static/` output.
-
-## Security & Configuration
-
-Never commit API keys or scan credentials. Configure providers through environment variables such
-as `STRIX_LLM` and `LLM_API_KEY`, and use only targets you are authorized to test.
-
-## Independent Console Guardrails
-
-The new Strix control console is an independent project. Do not extend or import UI code from
-`strix/viewer/frontend/`; consult it only for existing behavior, event formats, and run-file
-parsing. Keep these invariants:
-
-- The browser communicates with a dedicated control service and never receives provider secrets.
-- Local files under `strix_runs/` are the source of truth; indexes must be rebuildable.
-- Show phases, milestones, activity, findings, elapsed time, usage, and cost instead of a fabricated
-  completion percentage.
-- Use HTTP for commands and queries, resumable SSE for live events, and POST for steering.
-- Do not claim pause/resume until the engine supports real state restoration.
-- Never commit `.ua/` analysis artifacts.
-
-Console details are maintained separately:
-
-- [Product requirements](docs/console/product-requirements.md)
-- [Technical architecture](docs/console/architecture.md)
-- [Delivery roadmap](docs/console/roadmap.md)
+See [product requirements](docs/console/product-requirements.md),
+[technical architecture](docs/console/architecture.md), and
+[delivery roadmap](docs/console/roadmap.md).
