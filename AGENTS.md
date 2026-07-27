@@ -53,52 +53,22 @@ changes. Changes under `strix/viewer/frontend/` must include rebuilt `strix/view
 Never commit API keys or scan credentials. Configure providers through environment variables such
 as `STRIX_LLM` and `LLM_API_KEY`, and use only targets you are authorized to test.
 
-## Independent Console Product Scope
+## Independent Console Guardrails
 
-Build the new Strix control console as an independent project and repository. Do not extend or
-import UI code from `strix/viewer/frontend/`; it may only be consulted for event formats, run-file
-parsing, and existing behavior. The browser must communicate with a dedicated control service.
-That service starts and stops Strix, reads local artifacts, protects credentials, and streams
-structured events.
+The new Strix control console is an independent project. Do not extend or import UI code from
+`strix/viewer/frontend/`; consult it only for existing behavior, event formats, and run-file
+parsing. Keep these invariants:
 
-The console is organized around `Scan`, `Target`, `Agent`, `Event`, `ToolCall`, `Finding`,
-`Runtime`, `Report`, and `SteeringMessage`. Its primary routes are:
+- The browser communicates with a dedicated control service and never receives provider secrets.
+- Local files under `strix_runs/` are the source of truth; indexes must be rebuildable.
+- Show phases, milestones, activity, findings, elapsed time, usage, and cost instead of a fabricated
+  completion percentage.
+- Use HTTP for commands and queries, resumable SSE for live events, and POST for steering.
+- Do not claim pause/resume until the engine supports real state restoration.
+- Never commit `.ua/` analysis artifacts.
 
-- `/dashboard`: active scans, recent critical findings, environment health, and quick launch.
-- `/scans/new`: target, scan strategy, model/runtime settings, authorization review, and launch.
-- `/scans` and `/scans/:id`: task history plus Overview, Agents, Activity, Tools, Findings,
-  Runtime, and Report views.
-- `/local-runs` and `/local-runs/:id`: records discovered from `strix_runs/`, including active,
-  completed, interrupted, malformed, and partial runs.
-- `/findings`: findings aggregated across runs.
-- `/settings` and `/system`: provider status, defaults, Docker/image health, versions, disk, and
-  diagnostics.
+Console details are maintained separately:
 
-Do not show a fabricated completion percentage for autonomous Agent work. Show the current phase,
-completed milestones, last activity, active Agents, findings, elapsed time, token usage, and cost.
-Use HTTP for commands and queries, SSE with resumable event IDs for live updates, and POST requests
-for steering. Do not implement pause/resume until the engine supports real state restoration.
-Local run files remain the source of truth; an optional SQLite index is only a rebuildable cache.
-
-## Console Delivery Phases
-
-Implement one verifiable phase at a time:
-
-1. **Contracts and skeleton**: create the new repository, choose the frontend/control-service
-   stack, define scan states and API/event schemas, and add CI checks.
-2. **Local records**: index `strix_runs/`, build `/local-runs`, open partial or malformed records
-   safely, and support report downloads. This phase is read-only.
-3. **Scan control**: add environment checks, the create-scan wizard, subprocess isolation,
-   start/stop behavior, and the console-owned state machine:
-   `draft -> validating -> preparing -> running -> reporting -> completed`, with `failed`,
-   `stopping`, and `stopped` exits.
-4. **Live observability**: stream events, display Agent hierarchy, tool calls, errors, usage,
-   findings, and steering. Reconnect without losing events.
-5. **Findings and reports**: add cross-run filtering, finding details, PoC/evidence presentation,
-   and JSON, SARIF, and PDF exports.
-6. **Hardening**: test failure and restart paths, redact secrets, validate authorized targets,
-   add destructive-action confirmations, accessibility, responsive behavior, and release docs.
-
-Each phase uses a focused branch from `develop`, includes tests and documentation, passes its
-applicable build/lint/type checks, and is merged before the next phase begins. Never mix multiple
-phases into one commit or PR.
+- [Product requirements](docs/console/product-requirements.md)
+- [Technical architecture](docs/console/architecture.md)
+- [Delivery roadmap](docs/console/roadmap.md)
