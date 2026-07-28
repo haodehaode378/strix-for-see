@@ -253,7 +253,10 @@ jobs:
             if ($appProcess.HasExited) {
               throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
             }
-            if (-not (Get-Process -Name "strix-console-service" -ErrorAction SilentlyContinue)) {
+            $serviceProcess = Get-CimInstance Win32_Process |
+              Where-Object ExecutablePath -eq $service.FullName |
+              Select-Object -First 1
+            if (-not $serviceProcess) {
               throw "Bundled control service did not start"
             }
           } finally {
