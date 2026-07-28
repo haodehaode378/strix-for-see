@@ -3,8 +3,10 @@ import {
   Bot,
   Boxes,
   CircleDot,
+  FileText,
   Gauge,
   Send,
+  ShieldCheck,
   Wrench,
 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
@@ -17,15 +19,25 @@ import type {
 import { steerScan } from "../../features/scan-control/scanClient";
 import type { MessageKey } from "../../shared/i18n/messages";
 import { useLocale } from "../../shared/i18n/useLocale";
+import { NavigationLink } from "../../shared/navigation/NavigationLink";
 
-type Tab = "overview" | "agents" | "activity" | "tools" | "runtime";
+type Tab =
+  | "overview"
+  | "agents"
+  | "activity"
+  | "tools"
+  | "findings"
+  | "runtime"
+  | "report";
 
 const tabs: Array<{ id: Tab; icon: typeof Activity }> = [
   { id: "overview", icon: Gauge },
   { id: "agents", icon: Bot },
   { id: "activity", icon: Activity },
   { id: "tools", icon: Wrench },
+  { id: "findings", icon: ShieldCheck },
   { id: "runtime", icon: Boxes },
+  { id: "report", icon: FileText },
 ];
 
 export function LiveWorkspace({
@@ -113,7 +125,14 @@ export function LiveWorkspace({
         {tab === "agents" ? <Agents agents={agents} /> : null}
         {tab === "activity" ? <EventList events={events} /> : null}
         {tab === "tools" ? <EventList events={toolEvents} /> : null}
+        {tab === "findings" ? (
+          <ScanFindings
+            events={findings}
+            runName={scan.engineRunName}
+          />
+        ) : null}
         {tab === "runtime" ? <Runtime scan={scan} events={events} /> : null}
+        {tab === "report" ? <ScanReport runName={scan.engineRunName} /> : null}
       </div>
 
       {scan.status === "running" ? (
@@ -165,6 +184,48 @@ export function LiveWorkspace({
         </form>
       ) : null}
     </section>
+  );
+}
+
+function ScanFindings({
+  events,
+  runName,
+}: {
+  events: ScanEvent[];
+  runName: string;
+}) {
+  const { t } = useLocale();
+  return (
+    <div>
+      <EventList events={events} />
+      <NavigationLink
+        to={`/findings?run=${encodeURIComponent(runName)}`}
+        className="mt-5 inline-flex rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]"
+      >
+        {t("live.findings.open")}
+      </NavigationLink>
+    </div>
+  );
+}
+
+function ScanReport({ runName }: { runName: string }) {
+  const { t } = useLocale();
+  return (
+    <div className="grid min-h-56 place-items-center text-center">
+      <div className="max-w-md">
+        <FileText className="mx-auto size-7 text-[var(--accent)]" />
+        <h3 className="mt-3 text-sm font-semibold">{t("live.report.title")}</h3>
+        <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
+          {t("live.report.description")}
+        </p>
+        <NavigationLink
+          to={`/findings?run=${encodeURIComponent(runName)}`}
+          className="mt-5 inline-flex rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]"
+        >
+          {t("live.report.open")}
+        </NavigationLink>
+      </div>
+    </div>
   );
 }
 

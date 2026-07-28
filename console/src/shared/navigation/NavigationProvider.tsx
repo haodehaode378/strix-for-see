@@ -16,11 +16,11 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const navigate = useCallback((nextPath: string) => {
-    if (nextPath === currentPath()) {
+    if (nextPath === `${window.location.pathname}${window.location.search}`) {
       return;
     }
     window.history.pushState({}, "", nextPath);
-    setPath(nextPath);
+    setPath(currentPath());
   }, []);
 
   const value = useMemo(() => ({ path, navigate }), [path, navigate]);

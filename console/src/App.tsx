@@ -13,6 +13,8 @@ import { DesktopBridge } from "./components/scan/DesktopBridge";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EmptySectionPage } from "./pages/EmptySectionPage";
 import { EnvironmentPage } from "./pages/EnvironmentPage";
+import { FindingDetailPage } from "./pages/FindingDetailPage";
+import { FindingsPage } from "./pages/FindingsPage";
 import { LocalRunDetailPage } from "./pages/LocalRunDetailPage";
 import { LocalRunsPage } from "./pages/LocalRunsPage";
 import { NewScanPage } from "./pages/NewScanPage";
@@ -36,6 +38,9 @@ export function App() {
   ];
 
   const page = (() => {
+    if (path.startsWith("/findings/")) {
+      return <FindingDetailPage id={decodeURIComponent(path.slice("/findings/".length))} />;
+    }
     if (path.startsWith("/local-runs/")) {
       return <LocalRunDetailPage id={decodeURIComponent(path.slice("/local-runs/".length))} />;
     }
@@ -53,13 +58,7 @@ export function App() {
       case "/local-runs":
         return <LocalRunsPage />;
       case "/findings":
-        return (
-          <EmptySectionPage
-            title={t("findings.title")}
-            description={t("findings.empty")}
-            icon={ShieldCheck}
-          />
-        );
+        return <FindingsPage />;
       case "/system/environment":
         return <EnvironmentPage />;
       case "/settings":

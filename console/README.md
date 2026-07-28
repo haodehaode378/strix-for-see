@@ -92,6 +92,14 @@ In desktop mode, closing the main window hides it to the system tray. The tray c
 window, request a safe stop, or exit. Completion, failure, and critical-finding notifications are
 shown only after the user grants notification permission.
 
+## Findings and Reports
+
+`/findings` rebuilds a cross-run index from local `vulnerabilities.json` files. Workflow state,
+notes, and history are stored separately from authoritative Strix artifacts. Reports are generated
+locally as HTML, PDF, Markdown, or JSON with a separately selected language and redaction options.
+See [finding identity and local review](../docs/console/finding-identity.md) for fingerprint and
+deduplication rules.
+
 ## Desktop Development
 
 Install dependencies once with `npm install`, then run:
