@@ -27,12 +27,20 @@ function takeBootstrapToken(): string | null {
   return bootstrapToken;
 }
 
+async function getBootstrapToken(): Promise<string | null> {
+  const urlToken = takeBootstrapToken();
+  if (urlToken) return urlToken;
+  if (!("__TAURI_INTERNALS__" in window)) return null;
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string>("get_bootstrap_token");
+}
+
 async function getSessionToken(): Promise<string> {
   if (sessionToken) {
     return sessionToken;
   }
 
-  const bootstrapToken = takeBootstrapToken();
+  const bootstrapToken = await getBootstrapToken();
   if (!bootstrapToken) {
     throw new Error("No in-memory control-service token");
   }

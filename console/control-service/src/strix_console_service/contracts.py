@@ -73,6 +73,16 @@ class DiagnosticReport(CamelModel):
     schema_version: int = 1
     service_version: str = __version__
     system: SystemReport
+    audit: AuditSummary | None = None
+    state_issues: list[str] = Field(default_factory=list)
+
+
+class AuditSummary(CamelModel):
+    """Bounded mutation history without request bodies or target details."""
+
+    total_events: int = 0
+    corrupt_entries: int = 0
+    recent_actions: list[str] = Field(default_factory=list)
 
 
 RunState = Literal["active", "completed", "interrupted", "partial", "malformed"]
@@ -211,6 +221,55 @@ class TerminateScanRequest(CamelModel):
     """Separate confirmation for emergency process termination."""
 
     confirmed: bool = False
+
+
+class ApplicationUpdate(CamelModel):
+    """Stable GitHub release metadata safe to display in the browser."""
+
+    current_version: str
+    latest_version: str | None = None
+    available: bool = False
+    installable: bool = False
+    release_url: str | None = None
+    published_at: datetime | None = None
+
+
+class UpdateAuthorization(CamelModel):
+    """Result of the final active-scan guard before a desktop update."""
+
+    allowed: bool = True
+
+
+class SandboxUpdate(CamelModel):
+    """Compatible Sandbox release plus local image state."""
+
+    current_version: str | None = None
+    latest_version: str
+    image: str
+    digest: str
+    size_bytes: int
+    compatible: bool
+    available: bool
+
+
+class SandboxPullRequest(CamelModel):
+    """Explicit confirmation required before downloading an image."""
+
+    confirmed: bool = False
+
+
+SandboxPullState = Literal["idle", "downloading", "verifying", "completed", "failed"]
+
+
+class SandboxPullStatus(CamelModel):
+    """Observable Docker pull state; old images are never removed."""
+
+    state: SandboxPullState = "idle"
+    version: str | None = None
+    image: str | None = None
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    error_code: str | None = None
 
 
 EventActorKind = Literal["scan", "agent", "tool", "runtime", "operator", "system"]

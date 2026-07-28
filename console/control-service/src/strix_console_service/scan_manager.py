@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -256,6 +257,7 @@ class ScanManager:
         self.event_store = event_store or EventStore(state_path.parent / "events")
         self.run_root = run_root.resolve() if run_root is not None else None
         self.event_observer = event_observer
+        self.load_issue: str | None = None
         self._records = self._load()
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -346,6 +348,15 @@ class ScanManager:
     def list_scans(self) -> ScanListResponse:
         with self._lock:
             return ScanListResponse(scans=[self._summary(record) for record in self._records])
+
+    def has_active_scan(self) -> bool:
+        """Return whether an update or other exclusive operation must be blocked."""
+
+        with self._lock:
+            return any(
+                record.status in _ACTIVE_STATUSES or record.status == "queued"
+                for record in self._records
+            )
 
     def get(self, scan_id: str) -> ScanSummary | None:
         with self._lock:
@@ -532,11 +543,7 @@ class ScanManager:
         elif return_code == 0:
             self._finish(record, "completed", None)
         else:
-            error_code = (
-                "processExitedBySignal"
-                if return_code < 0
-                else f"processExit{return_code}"
-            )
+            error_code = self._classify_failure(record, return_code)
             self._finish(record, "failed", error_code)
 
     def _finish(
@@ -600,10 +607,31 @@ class ScanManager:
         try:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
             if not isinstance(data, list):
+                self.load_issue = "invalidScanQueue"
                 return []
             return [_ScanRecord.model_validate(item) for item in data]
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            self.load_issue = "invalidScanQueue"
             return []
+
+    def _classify_failure(self, record: _ScanRecord, return_code: int) -> str:
+        if self.run_root is not None:
+            run_record = self.run_root / record.engine_run_name / "run.json"
+            try:
+                raw = run_record.read_text(encoding="utf-8")[:32_768].lower()
+            except (OSError, UnicodeDecodeError):
+                raw = ""
+            if re.search(r"\b(429|rate[ _-]?limit|too many requests)\b", raw):
+                return "providerRateLimited"
+            if re.search(r"\b(budget|cost limit|spend limit)\b", raw):
+                return "budgetExhausted"
+            docker_failure = (
+                r"\b(docker|container|daemon).{0,80}\b"
+                r"(lost|unavailable|stopped|failed)\b"
+            )
+            if re.search(docker_failure, raw):
+                return "dockerUnavailable"
+        return "processExitedBySignal" if return_code < 0 else f"processExit{return_code}"
 
     def _persist(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)

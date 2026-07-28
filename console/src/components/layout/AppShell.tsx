@@ -26,6 +26,12 @@ export function AppShell({ navigation, children }: AppShellProps) {
 
   return (
     <div className="mx-auto grid min-h-[100dvh] max-w-[1600px] grid-cols-1 md:grid-cols-[240px_1fr]">
+      <a
+        href="#main-content"
+        className="fixed top-2 left-2 z-50 -translate-y-20 rounded-lg bg-[var(--surface)] px-3 py-2 text-sm font-semibold focus:translate-y-0"
+      >
+        {t("actions.skipToContent")}
+      </a>
       <aside className="border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-4 py-4 backdrop-blur-xl md:border-r md:border-b-0 md:px-5 md:py-6">
         <div className="flex items-center justify-between gap-4 md:block">
           <NavigationLink
@@ -97,7 +103,9 @@ export function AppShell({ navigation, children }: AppShellProps) {
         </div>
       </aside>
 
-      <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-10 lg:py-9">{children}</main>
+      <main id="main-content" className="min-w-0 px-4 py-6 sm:px-6 lg:px-10 lg:py-9">
+        {children}
+      </main>
     </div>
   );
 }

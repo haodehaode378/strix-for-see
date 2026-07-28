@@ -11,7 +11,6 @@ import {
 import { AppShell, type NavigationItem } from "./components/layout/AppShell";
 import { DesktopBridge } from "./components/scan/DesktopBridge";
 import { DashboardPage } from "./pages/DashboardPage";
-import { EmptySectionPage } from "./pages/EmptySectionPage";
 import { EnvironmentPage } from "./pages/EnvironmentPage";
 import { FindingDetailPage } from "./pages/FindingDetailPage";
 import { FindingsPage } from "./pages/FindingsPage";
@@ -20,6 +19,7 @@ import { LocalRunsPage } from "./pages/LocalRunsPage";
 import { NewScanPage } from "./pages/NewScanPage";
 import { ScanDetailPage } from "./pages/ScanDetailPage";
 import { ScansPage } from "./pages/ScansPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { useLocale } from "./shared/i18n/useLocale";
 import { useNavigation } from "./shared/navigation/useNavigation";
 
@@ -62,13 +62,7 @@ export function App() {
       case "/system/environment":
         return <EnvironmentPage />;
       case "/settings":
-        return (
-          <EmptySectionPage
-            title={t("settings.title")}
-            description={t("settings.phaseNotice")}
-            icon={Settings}
-          />
-        );
+        return <SettingsPage />;
       default:
         return <DashboardPage />;
     }

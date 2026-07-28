@@ -14,7 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from strix_console_service import __version__
+from strix_console_service.audit import AuditLog
 from strix_console_service.contracts import (
+    ApplicationUpdate,
     CreateScanRequest,
     DiagnosticReport,
     ExportFindingsRequest,
@@ -26,6 +28,9 @@ from strix_console_service.contracts import (
     ProviderConfigRequest,
     ProviderStatus,
     ProviderTestResult,
+    SandboxPullRequest,
+    SandboxPullStatus,
+    SandboxUpdate,
     ScanListResponse,
     ScanSummary,
     SessionResponse,
@@ -33,6 +38,7 @@ from strix_console_service.contracts import (
     SteeringResponse,
     SystemReport,
     TerminateScanRequest,
+    UpdateAuthorization,
     UpdateFindingRequest,
 )
 from strix_console_service.events import (
@@ -55,6 +61,7 @@ from strix_console_service.scan_manager import (
 )
 from strix_console_service.scan_validation import ScanValidationError
 from strix_console_service.system_checks import SystemInspector
+from strix_console_service.updates import UpdateError, UpdateService
 
 
 class _AppServices:
@@ -69,6 +76,8 @@ class _AppServices:
         scan_manager: ScanManager,
         event_store: EventStore,
         finding_store: FindingStore,
+        update_service: UpdateService,
+        audit_log: AuditLog,
     ) -> None:
         self.run_indexer = run_indexer
         self.system_inspector = system_inspector
@@ -76,6 +85,8 @@ class _AppServices:
         self.scan_manager = scan_manager
         self.event_store = event_store
         self.finding_store = finding_store
+        self.update_service = update_service
+        self.audit_log = audit_log
 
 
 def _build_services(
@@ -84,6 +95,7 @@ def _build_services(
     system_inspector: SystemInspector | None = None,
     provider_service: ProviderService | None = None,
     scan_manager: ScanManager | None = None,
+    update_service: UpdateService | None = None,
 ) -> _AppServices:
     run_indexer = (
         LocalRunIndexer(run_roots)
@@ -118,6 +130,7 @@ def _build_services(
         event_observer=event_observer,
         run_root=run_indexer.default_root,
     )
+    updater = update_service or UpdateService(scan_active=manager.has_active_scan)
     return _AppServices(
         run_indexer=run_indexer,
         system_inspector=inspector,
@@ -125,6 +138,8 @@ def _build_services(
         scan_manager=manager,
         event_store=manager.event_store,
         finding_store=FindingStore(run_indexer, state_root / "findings.json"),
+        update_service=updater,
+        audit_log=AuditLog(state_root / "audit.jsonl"),
     )
 
 
@@ -157,6 +172,7 @@ def create_app(
     system_inspector: SystemInspector | None = None,
     provider_service: ProviderService | None = None,
     scan_manager: ScanManager | None = None,
+    update_service: UpdateService | None = None,
 ) -> FastAPI:
     """Create an isolated service instance with per-process in-memory credentials."""
 
@@ -169,6 +185,7 @@ def create_app(
         system_inspector=system_inspector,
         provider_service=provider_service,
         scan_manager=scan_manager,
+        update_service=update_service,
     )
 
     @asynccontextmanager
@@ -266,7 +283,76 @@ def create_app(
         dependencies=[Depends(require_access_token)],
     )
     def diagnostics() -> DiagnosticReport:
-        return services.system_inspector.diagnostics()
+        report = services.system_inspector.diagnostics()
+        state_issues = (
+            [services.scan_manager.load_issue] if services.scan_manager.load_issue else []
+        )
+        return report.model_copy(
+            update={
+                "audit": services.audit_log.summary(),
+                "state_issues": state_issues,
+            }
+        )
+
+    @app.get(
+        "/api/updates/application",
+        response_model=ApplicationUpdate,
+        dependencies=[Depends(require_access_token)],
+    )
+    def application_update() -> ApplicationUpdate:
+        try:
+            return services.update_service.check_application()
+        except (OSError, ValueError) as error:
+            detail = error.code if isinstance(error, UpdateError) else "updateCheckFailed"
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from error
+
+    @app.post(
+        "/api/updates/application/authorize",
+        response_model=UpdateAuthorization,
+        dependencies=[Depends(require_access_token)],
+    )
+    def authorize_application_update() -> UpdateAuthorization:
+        try:
+            services.update_service.authorize_application_update()
+            services.audit_log.append("applicationUpdate.authorized", "allowed")
+            return UpdateAuthorization()
+        except UpdateError as error:
+            services.audit_log.append("applicationUpdate.authorized", "blocked")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+
+    @app.get(
+        "/api/updates/sandbox",
+        response_model=SandboxUpdate,
+        dependencies=[Depends(require_access_token)],
+    )
+    def sandbox_update() -> SandboxUpdate:
+        try:
+            return services.update_service.check_sandbox()
+        except (OSError, ValueError) as error:
+            detail = error.code if isinstance(error, UpdateError) else "updateCheckFailed"
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from error
+
+    @app.post(
+        "/api/updates/sandbox/pull",
+        response_model=SandboxPullStatus,
+        dependencies=[Depends(require_access_token)],
+    )
+    def pull_sandbox(request: SandboxPullRequest) -> SandboxPullStatus:
+        try:
+            result = services.update_service.start_sandbox_pull(confirmed=request.confirmed)
+            services.audit_log.append("sandboxUpdate.started", "accepted")
+            return result
+        except UpdateError as error:
+            services.audit_log.append("sandboxUpdate.started", "blocked")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+
+    @app.get(
+        "/api/updates/sandbox/pull",
+        response_model=SandboxPullStatus,
+        dependencies=[Depends(require_access_token)],
+    )
+    def sandbox_pull_status() -> SandboxPullStatus:
+        return services.update_service.pull_status()
 
     @app.get(
         "/api/provider",
@@ -283,7 +369,9 @@ def create_app(
     )
     def configure_provider(request: ProviderConfigRequest) -> ProviderStatus:
         try:
-            return services.provider_service.configure(request)
+            result = services.provider_service.configure(request)
+            services.audit_log.append("provider.configured", "success")
+            return result
         except (ProviderConfigurationError, OSError) as error:
             detail = (
                 error.code
@@ -310,7 +398,9 @@ def create_app(
         x_idempotency_key: Annotated[str | None, Header()] = None,
     ) -> ScanSummary:
         try:
-            return services.scan_manager.create(request, x_idempotency_key or "")
+            result = services.scan_manager.create(request, x_idempotency_key or "")
+            services.audit_log.append("scan.created", "accepted")
+            return result
         except (ScanValidationError, ScanManagerError) as error:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -343,7 +433,9 @@ def create_app(
     )
     def stop_scan(scan_id: str) -> ScanSummary:
         try:
-            return services.scan_manager.stop(scan_id)
+            result = services.scan_manager.stop(scan_id)
+            services.audit_log.append("scan.stop", "accepted")
+            return result
         except ScanManagerError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
 
@@ -354,7 +446,9 @@ def create_app(
     )
     def terminate_scan(scan_id: str, request: TerminateScanRequest) -> ScanSummary:
         try:
-            return services.scan_manager.terminate(scan_id, confirmed=request.confirmed)
+            result = services.scan_manager.terminate(scan_id, confirmed=request.confirmed)
+            services.audit_log.append("scan.terminate", "accepted")
+            return result
         except ScanManagerError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
 

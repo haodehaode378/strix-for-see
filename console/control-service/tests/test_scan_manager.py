@@ -6,6 +6,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from strix_console_service.contracts import CreateScanRequest, ScanSummary
 from strix_console_service.provider import ProviderRuntime, ProviderService
 from strix_console_service.scan_manager import ProcessAdapter, ScanManager, _ScanRecord
@@ -244,3 +246,51 @@ def test_steering_is_written_only_for_a_running_in_scope_scan(tmp_path: Path) ->
     finally:
         adapter.releases.get(scan.id, threading.Event()).set()
         manager.close()
+
+
+def test_corrupt_queue_is_reported_without_crashing(tmp_path: Path) -> None:
+    state_path = tmp_path / "queue.json"
+    state_path.write_text("{broken", encoding="utf-8")
+
+    manager = ScanManager(
+        state_path=state_path,
+        provider_service=_provider(tmp_path),
+        process_adapter=BlockingProcessAdapter(),
+        readiness=lambda: True,
+    )
+
+    assert manager.list_scans().scans == []
+    assert manager.load_issue == "invalidScanQueue"
+
+
+@pytest.mark.parametrize(
+    ("run_message", "expected"),
+    [
+        ("provider returned HTTP 429 rate limit", "providerRateLimited"),
+        ("model budget exceeded the cost limit", "budgetExhausted"),
+        ("Docker daemon became unavailable", "dockerUnavailable"),
+    ],
+)
+def test_runtime_failures_use_safe_actionable_categories(
+    tmp_path: Path,
+    run_message: str,
+    expected: str,
+) -> None:
+    run_root = tmp_path / "runs"
+    manager = ScanManager(
+        state_path=tmp_path / "queue.json",
+        provider_service=_provider(tmp_path),
+        process_adapter=BlockingProcessAdapter(),
+        readiness=lambda: True,
+        run_root=run_root,
+    )
+    scan = manager.create(_request(), f"failure-{expected}")
+    record = manager._records[0]
+    run_path = run_root / scan.engine_run_name
+    run_path.mkdir(parents=True)
+    (run_path / "run.json").write_text(
+        json.dumps({"status": "failed", "message": run_message}),
+        encoding="utf-8",
+    )
+
+    assert manager._classify_failure(record, 1) == expected

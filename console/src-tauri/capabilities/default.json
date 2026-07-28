@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Baseline capability for the Strix Console main window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default"]
 }
