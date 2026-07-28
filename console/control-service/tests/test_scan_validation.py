@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from strix_console_service.contracts import CreateScanRequest
-from strix_console_service.scan_validation import ScanValidationError, validate_scan_request
+from strix_console_service.scan_validation import (
+    ScanValidationError,
+    validate_scan_request,
+    validate_steering_message,
+)
 
 
 def _request(**updates: object) -> CreateScanRequest:
@@ -100,3 +104,17 @@ def test_public_repository_rejects_local_network_url() -> None:
         validate_scan_request(
             _request(targetType="repository", target="https://127.0.0.1/repo.git")
         )
+
+
+def test_steering_rejects_secrets_and_out_of_scope_targets() -> None:
+    request = _request()
+
+    with pytest.raises(ScanValidationError, match="steeringContainsSecret"):
+        validate_steering_message(request, "Use token=super-secret-value")
+    with pytest.raises(ScanValidationError, match="steeringExpandsScope"):
+        validate_steering_message(request, "Also inspect https://outside.example.net")
+
+    assert (
+        validate_steering_message(request, "Re-check https://example.com/login")
+        == "Re-check https://example.com/login"
+    )

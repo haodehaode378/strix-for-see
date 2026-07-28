@@ -27,6 +27,10 @@ _SECRET_INSTRUCTION_PATTERN = re.compile(
     r"(?i)(?:\bBearer\s+\S+|\bsk-[A-Za-z0-9_-]{8,}|"
     r"(?:api[_-]?key|password|token|secret)\s*[:=]\s*\S+)"
 )
+_STEERING_TARGET_PATTERN = re.compile(
+    r"(?i)(?:https?://[^\s]+|\b(?:\d{1,3}\.){3}\d{1,3}\b|"
+    r"\b(?:[a-z0-9-]+\.)+[a-z]{2,63}\b)"
+)
 
 
 class ScanValidationError(ValueError):
@@ -86,6 +90,29 @@ def validate_scan_request(request: CreateScanRequest) -> ValidatedScan:
         engine_target=engine_target,
         constraint_instruction=_constraint_instruction(normalized),
     )
+
+
+def validate_steering_message(request: CreateScanRequest, message: str) -> str:
+    """Reject secrets and target expansion before writing an operator message."""
+
+    normalized = message.strip()
+    if not normalized:
+        raise ScanValidationError("steeringMessageRequired")
+    if _SECRET_INSTRUCTION_PATTERN.search(normalized):
+        raise ScanValidationError("steeringContainsSecret")
+    allowed = set(request.scope.allowed_hosts)
+    parsed_target = urlsplit(request.target)
+    if parsed_target.hostname:
+        allowed.add(parsed_target.hostname.casefold())
+    elif request.target_type == "network":
+        allowed.add(request.target.rstrip(".").casefold())
+    for match in _STEERING_TARGET_PATTERN.findall(normalized):
+        candidate = match.rstrip(".,;:)]}")
+        parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}")
+        hostname = (parsed.hostname or candidate).rstrip(".").casefold()
+        if hostname not in allowed:
+            raise ScanValidationError("steeringExpandsScope")
+    return normalized
 
 
 def _validate_target(target_type: str, target: str) -> str:

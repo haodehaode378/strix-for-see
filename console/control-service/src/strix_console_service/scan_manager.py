@@ -18,12 +18,18 @@ from urllib.parse import urlsplit, urlunsplit
 from strix_console_service.contracts import (
     CamelModel,
     CreateScanRequest,
+    EventActor,
     ScanListResponse,
     ScanStatus,
     ScanSummary,
+    SteeringResponse,
 )
+from strix_console_service.events import EventStore, RunEventObserver
 from strix_console_service.provider import ProviderRuntime, ProviderService
-from strix_console_service.scan_validation import validate_scan_request
+from strix_console_service.scan_validation import (
+    validate_scan_request,
+    validate_steering_message,
+)
 from strix_console_service.system_checks import redact_text
 
 _ACTIVE_STATUSES: set[ScanStatus] = {
@@ -239,11 +245,17 @@ class ScanManager:
         provider_service: ProviderService,
         process_adapter: ProcessAdapter,
         readiness: Callable[[], bool],
+        event_store: EventStore | None = None,
+        event_observer: RunEventObserver | None = None,
+        run_root: Path | None = None,
     ) -> None:
         self.state_path = state_path
         self.provider_service = provider_service
         self.process_adapter = process_adapter
         self.readiness = readiness
+        self.event_store = event_store or EventStore(state_path.parent / "events")
+        self.run_root = run_root.resolve() if run_root is not None else None
+        self.event_observer = event_observer
         self._records = self._load()
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -320,6 +332,13 @@ class ScanManager:
             )
             self._records.append(record)
             self._persist()
+            self.event_store.append(
+                scan_id,
+                "scan.queued",
+                actor=EventActor(kind="scan", id=scan_id),
+                payload={"status": "queued"},
+                source_key="lifecycle:queued",
+            )
             summary = self._summary(record)
         self._wake.set()
         return summary
@@ -331,7 +350,48 @@ class ScanManager:
     def get(self, scan_id: str) -> ScanSummary | None:
         with self._lock:
             record = self._find(scan_id)
+            if record is not None:
+                self._refresh_events(record)
             return self._summary(record) if record is not None else None
+
+    def refresh_events(self, scan_id: str) -> None:
+        with self._lock:
+            self._refresh_events(self._require(scan_id))
+
+    def steer(self, scan_id: str, message: str) -> SteeringResponse:
+        with self._lock:
+            record = self._require(scan_id)
+            if record.status != "running":
+                raise ScanManagerError("scanCannotSteer")
+            normalized = validate_steering_message(record.request, message)
+            if self.run_root is None:
+                raise ScanManagerError("steeringUnavailable")
+            run_dir = (self.run_root / record.engine_run_name).resolve()
+            if run_dir.parent != self.run_root:
+                raise ScanManagerError("steeringUnavailable")
+            inbox = run_dir / ".state" / "console-steering.jsonl"
+            inbox.parent.mkdir(parents=True, exist_ok=True)
+            message_id = uuid.uuid4().hex
+            with inbox.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "id": message_id,
+                            "createdAt": datetime.now(UTC).isoformat(),
+                            "message": normalized,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+            event = self.event_store.append(
+                scan_id,
+                "steering.accepted",
+                actor=EventActor(kind="operator"),
+                payload={"messageId": message_id},
+                source_key=f"steering:{message_id}",
+            )
+            return SteeringResponse(accepted=True, event_id=event.event_id)
 
     def stop(self, scan_id: str) -> ScanSummary:
         with self._lock:
@@ -339,12 +399,14 @@ class ScanManager:
             if record.status == "queued":
                 self._update(record, status="stopped", ended_at=datetime.now(UTC))
                 self._persist()
+                self._lifecycle_event(record, "stopped")
                 return self._summary(record)
             if record.status not in {"preparing", "running", "reporting"}:
                 raise ScanManagerError("scanCannotStop")
             record.stop_requested = True
             self._update(record, status="stopping")
             self._persist()
+            self._lifecycle_event(record, "stopping")
         self.process_adapter.stop(scan_id)
         return self._summary(record)
 
@@ -359,6 +421,7 @@ class ScanManager:
             record.terminate_requested = True
             self._update(record, status="terminating")
             self._persist()
+            self._lifecycle_event(record, "terminating")
         if not self.process_adapter.terminate(scan_id) and previous_status != "preparing":
             with self._lock:
                 self._update(record, status="failed", error_code="processControlLost")
@@ -401,6 +464,7 @@ class ScanManager:
                 return None
             self._update(record, status="preparing")
             self._persist()
+            self._lifecycle_event(record, "preparing")
             return record
 
     def _execute(self, record: _ScanRecord) -> None:
@@ -426,6 +490,18 @@ class ScanManager:
                 else:
                     self._update(record, status="running")
                 self._persist()
+                self._lifecycle_event(record, record.status)
+                self.event_store.append(
+                    record.id,
+                    "runtime.updated",
+                    actor=EventActor(kind="runtime", id=str(process_id)),
+                    payload={
+                        "state": "running",
+                        "processId": process_id,
+                        "engineRunName": record.engine_run_name,
+                    },
+                    source_key=f"runtime:started:{process_id}",
+                )
             if record.terminate_requested:
                 self.process_adapter.terminate(record.id)
             elif record.stop_requested:
@@ -436,6 +512,7 @@ class ScanManager:
                 record.stop_requested = True
                 self._update(record, status="stopping", error_code="durationLimitReached")
                 self._persist()
+                self._lifecycle_event(record, "stopping")
 
         try:
             return_code = self.process_adapter.run(
@@ -473,6 +550,14 @@ class ScanManager:
             record.ended_at = datetime.now(UTC)
             self._update(record, status=status, error_code=error_code)
             self._persist()
+            self._lifecycle_event(record, status, error_code=error_code)
+            self.event_store.append(
+                record.id,
+                "runtime.updated",
+                actor=EventActor(kind="runtime"),
+                payload={"state": "stopped", "terminalStatus": status},
+                source_key=f"runtime:stopped:{status}:{record.updated_at.isoformat()}",
+            )
         self._wake.set()
 
     def _summary(self, record: _ScanRecord) -> ScanSummary:
@@ -550,6 +635,28 @@ class ScanManager:
                 changed = True
         if changed:
             self._persist()
+
+    def _refresh_events(self, record: _ScanRecord) -> None:
+        if self.event_observer is not None:
+            self.event_observer.refresh(record.id, record.engine_run_name)
+
+    def _lifecycle_event(
+        self,
+        record: _ScanRecord,
+        status: str,
+        *,
+        error_code: str | None = None,
+    ) -> None:
+        payload: dict[str, str] = {"status": status}
+        if error_code:
+            payload["errorCode"] = error_code
+        self.event_store.append(
+            record.id,
+            f"scan.{status}",
+            actor=EventActor(kind="scan", id=record.id),
+            payload=payload,
+            source_key=f"lifecycle:{status}:{record.updated_at.isoformat()}",
+        )
 
     def _find(self, scan_id: str) -> _ScanRecord | None:
         return next((record for record in self._records if record.id == scan_id), None)

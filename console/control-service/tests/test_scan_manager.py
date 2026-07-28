@@ -219,3 +219,28 @@ def test_restart_reconciles_stale_running_state_to_failure(tmp_path: Path) -> No
         assert scan.process_id is None
     finally:
         manager.close()
+
+
+def test_steering_is_written_only_for_a_running_in_scope_scan(tmp_path: Path) -> None:
+    adapter = BlockingProcessAdapter()
+    run_root = tmp_path / "runs"
+    manager = ScanManager(
+        state_path=tmp_path / "queue.json",
+        provider_service=_provider(tmp_path),
+        process_adapter=adapter,
+        readiness=lambda: True,
+        run_root=run_root,
+    )
+    manager.start()
+    try:
+        scan = manager.create(_request(), "steering")
+        _wait_for(manager, scan.id, "running")
+        response = manager.steer(scan.id, "Focus on the existing authentication flow")
+
+        assert response.accepted
+        inbox = run_root / scan.engine_run_name / ".state" / "console-steering.jsonl"
+        payload = json.loads(inbox.read_text(encoding="utf-8"))
+        assert payload["message"] == "Focus on the existing authentication flow"
+    finally:
+        adapter.releases.get(scan.id, threading.Event()).set()
+        manager.close()

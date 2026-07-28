@@ -3,15 +3,15 @@ from __future__ import annotations
 import hmac
 import os
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from strix_console_service import __version__
 from strix_console_service.contracts import (
@@ -26,8 +26,16 @@ from strix_console_service.contracts import (
     ScanListResponse,
     ScanSummary,
     SessionResponse,
+    SteeringRequest,
+    SteeringResponse,
     SystemReport,
     TerminateScanRequest,
+)
+from strix_console_service.events import (
+    EventStore,
+    RunEventObserver,
+    heartbeat_frame,
+    sse_frames,
 )
 from strix_console_service.local_runs import LocalRunIndexer, RunRoot
 from strix_console_service.provider import (
@@ -54,11 +62,13 @@ class _AppServices:
         system_inspector: SystemInspector,
         provider_service: ProviderService,
         scan_manager: ScanManager,
+        event_store: EventStore,
     ) -> None:
         self.run_indexer = run_indexer
         self.system_inspector = system_inspector
         self.provider_service = provider_service
         self.scan_manager = scan_manager
+        self.event_store = event_store
 
 
 def _build_services(
@@ -74,6 +84,8 @@ def _build_services(
         else LocalRunIndexer.from_environment()
     )
     state_root = run_indexer.default_root.parent / "state"
+    event_store = EventStore(state_root / "events")
+    event_observer = RunEventObserver(run_indexer.default_root, event_store)
     provider = provider_service or ProviderService(
         config_path=state_root / "provider.json",
         credential_store=default_credential_store(),
@@ -95,12 +107,16 @@ def _build_services(
             strix_path=os.environ.get("STRIX_CONSOLE_STRIX_PATH"),
         ),
         readiness=lambda: inspector.inspect().summary.ready,
+        event_store=event_store,
+        event_observer=event_observer,
+        run_root=run_indexer.default_root,
     )
     return _AppServices(
         run_indexer=run_indexer,
         system_inspector=inspector,
         provider_service=provider,
         scan_manager=manager,
+        event_store=manager.event_store,
     )
 
 
@@ -177,6 +193,7 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=[
             "Content-Type",
+            "Last-Event-ID",
             "X-Idempotency-Key",
             "X-Strix-Access-Token",
             "X-Strix-Bootstrap",
@@ -332,6 +349,56 @@ def create_app(
             return services.scan_manager.terminate(scan_id, confirmed=request.confirmed)
         except ScanManagerError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+
+    @app.post(
+        "/api/scans/{scan_id}/steering",
+        response_model=SteeringResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def steer_scan(scan_id: str, request: SteeringRequest) -> SteeringResponse:
+        try:
+            return services.scan_manager.steer(scan_id, request.message)
+        except (ScanValidationError, ScanManagerError, OSError) as error:
+            detail = error.code if hasattr(error, "code") else "steeringWriteFailed"
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from error
+
+    @app.get(
+        "/api/scans/{scan_id}/events",
+        dependencies=[Depends(require_access_token)],
+    )
+    def scan_events(
+        scan_id: str,
+        last_event_id: Annotated[str | None, Header()] = None,
+        after: str | None = Query(default=None),
+    ) -> StreamingResponse:
+        if services.scan_manager.get(scan_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scanNotFound")
+        cursor = last_event_id or after
+
+        def stream() -> Iterator[str]:
+            nonlocal cursor
+            idle_ticks = 0
+            while True:
+                services.scan_manager.refresh_events(scan_id)
+                events = services.event_store.wait_after(scan_id, cursor, timeout=0.75)
+                if events:
+                    yield from sse_frames(events)
+                    cursor = events[-1].event_id
+                    idle_ticks = 0
+                else:
+                    idle_ticks += 1
+                if idle_ticks >= 20:
+                    yield heartbeat_frame()
+                    idle_ticks = 0
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get(
         "/api/local-runs",

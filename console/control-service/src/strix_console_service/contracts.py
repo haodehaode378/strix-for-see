@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -211,6 +211,41 @@ class TerminateScanRequest(CamelModel):
     """Separate confirmation for emergency process termination."""
 
     confirmed: bool = False
+
+
+EventActorKind = Literal["scan", "agent", "tool", "runtime", "operator", "system"]
+
+
+class EventActor(CamelModel):
+    kind: EventActorKind
+    id: str | None = None
+
+
+class ScanEvent(CamelModel):
+    """Versioned browser-safe event persisted before delivery."""
+
+    schema_version: int = 1
+    event_id: str
+    scan_id: str
+    occurred_at: datetime
+    type: str
+    actor: EventActor | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source_key: str | None = Field(default=None, exclude=True)
+
+
+class ScanEventsResponse(CamelModel):
+    schema_version: int = 1
+    events: list[ScanEvent]
+
+
+class SteeringRequest(CamelModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class SteeringResponse(CamelModel):
+    accepted: bool
+    event_id: str
 
 
 ProviderKind = Literal["openai", "anthropic", "gemini", "openaiCompatible", "ollama"]

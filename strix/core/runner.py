@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -22,6 +23,7 @@ from strix.config.models import (
     uses_chat_completions_tool_schema,
 )
 from strix.core.agents import AgentCoordinator
+from strix.core.console_bridge import watch_console_steering
 from strix.core.execution import (
     respawn_subagents,
     run_agent_loop,
@@ -204,6 +206,7 @@ async def run_strix_scan(
     logger.info("Sandbox ready for scan %s", scan_id)
 
     sessions_to_close: list[SQLiteSession] = []
+    steering_task: asyncio.Task[None] | None = None
 
     try:
         targets = scan_config.get("targets") or []
@@ -294,6 +297,10 @@ async def run_strix_scan(
         root_session = open_agent_session(root_id, agents_db)
         sessions_to_close.append(root_session)
         await coordinator.attach_runtime(root_id, session=root_session)
+        steering_task = asyncio.create_task(
+            watch_console_steering(state_dir, coordinator, root_id),
+            name=f"console-steering-{scan_id}",
+        )
 
         if is_resume:
             await respawn_subagents(
@@ -399,6 +406,10 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
+        if steering_task is not None:
+            steering_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await steering_task
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()
