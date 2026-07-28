@@ -1,0 +1,106 @@
+name: Console Candidate Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Workflow run containing strix-console-release-candidate
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: strix-console-release-candidate
+          path: candidate
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.run_id }}
+
+      - name: Install and inspect candidate
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem candidate/*-setup.exe | Select-Object -First 1
+          if (-not $bundle) {
+            throw "NSIS installer was not found in the selected run"
+          }
+
+          $install = Start-Process -FilePath $bundle.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "NSIS installer exited with code $($install.ExitCode)"
+          }
+
+          $uninstallRoots = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $entry = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
+            Where-Object DisplayName -eq "Strix Console" |
+            Select-Object -First 1
+          if (-not $entry -or -not $entry.InstallLocation) {
+            throw "Installed Strix Console entry was not found"
+          }
+
+          $installLocation = $entry.InstallLocation.Trim().Trim('"')
+          $executables = Get-ChildItem -LiteralPath $installLocation -Filter *.exe -Recurse
+          foreach ($executable in $executables) {
+            Write-Host "Installed executable: $(
+              [IO.Path]::GetRelativePath($installLocation, $executable.FullName)
+            )"
+          }
+          $app = $executables |
+            Where-Object Name -In @("strix-console.exe", "Strix Console.exe") |
+            Select-Object -First 1
+          $service = $executables |
+            Where-Object Name -eq "strix-console-service.exe" |
+            Select-Object -First 1
+          $strix = $executables | Where-Object Name -eq "strix.exe" | Select-Object -First 1
+          if (-not $app -or -not $service -or -not $strix) {
+            throw "Installed application or bundled sidecars are missing"
+          }
+
+          try {
+            $env:STRIX_CONSOLE_ACCESS_TOKEN = "candidate-smoke-access-token"
+            $env:STRIX_CONSOLE_BOOTSTRAP_TOKEN = "candidate-smoke-bootstrap-token"
+            $env:STRIX_CONSOLE_STRIX_PATH = $strix.FullName
+            $directService = Start-Process -FilePath $service.FullName `
+              -ArgumentList "--parent-pid", $PID -PassThru
+            Start-Sleep -Seconds 5
+            if ($directService.HasExited) {
+              throw "Control service exited during direct startup with code $(
+                $directService.ExitCode
+              )"
+            }
+            Stop-Process -Id $directService.Id -Force
+            Wait-Process -Id $directService.Id -ErrorAction SilentlyContinue
+
+            $appProcess = Start-Process -FilePath $app.FullName -PassThru
+            Start-Sleep -Seconds 10
+            if ($appProcess.HasExited) {
+              throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
+            }
+            $serviceProcess = Get-CimInstance Win32_Process |
+              Where-Object ExecutablePath -eq $service.FullName |
+              Select-Object -First 1
+            if (-not $serviceProcess) {
+              throw "Desktop application did not start its bundled control service"
+            }
+          } finally {
+            Get-Process -Name "strix-console", "Strix Console", "strix-console-service" `
+              -ErrorAction SilentlyContinue |
+              Stop-Process -Force
+            $uninstaller = $executables |
+              Where-Object Name -Match "uninstall.*\.exe" |
+              Select-Object -First 1
+            if ($uninstaller) {
+              Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait
+            }
+          }
