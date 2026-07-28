@@ -206,6 +206,64 @@ jobs:
           name: sandbox-manifest
           path: console/src-tauri/target/release/bundle/nsis
 
+      - name: Smoke test Windows installer
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem console/src-tauri/target/release/bundle/nsis/*-setup.exe |
+            Select-Object -First 1
+          if (-not $bundle) {
+            throw "NSIS installer was not generated"
+          }
+
+          $install = Start-Process -FilePath $bundle.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "NSIS installer exited with code $($install.ExitCode)"
+          }
+
+          $uninstallRoots = @(
+            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $entry = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
+            Where-Object DisplayName -eq "Strix Console" |
+            Select-Object -First 1
+          if (-not $entry -or -not $entry.InstallLocation) {
+            throw "Installed Strix Console entry was not found"
+          }
+
+          $executables = Get-ChildItem -LiteralPath $entry.InstallLocation -Filter *.exe -Recurse
+          $app = $executables |
+            Where-Object Name -In @("strix-console.exe", "Strix Console.exe") |
+            Select-Object -First 1
+          $service = $executables |
+            Where-Object Name -eq "strix-console-service.exe" |
+            Select-Object -First 1
+          $strix = $executables | Where-Object Name -eq "strix.exe" | Select-Object -First 1
+          if (-not $app -or -not $service -or -not $strix) {
+            throw "Installed application or bundled sidecars are missing"
+          }
+
+          try {
+            $appProcess = Start-Process -FilePath $app.FullName -PassThru
+            Start-Sleep -Seconds 10
+            if ($appProcess.HasExited) {
+              throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
+            }
+            if (-not (Get-Process -Name "strix-console-service" -ErrorAction SilentlyContinue)) {
+              throw "Bundled control service did not start"
+            }
+          } finally {
+            Get-Process -Name "strix-console", "Strix Console", "strix-console-service" `
+              -ErrorAction SilentlyContinue |
+              Stop-Process -Force
+            $uninstaller = $executables |
+              Where-Object Name -Match "uninstall.*\.exe" |
+              Select-Object -First 1
+            if ($uninstaller) {
+              Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait
+            }
+          }
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
