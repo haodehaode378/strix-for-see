@@ -45,12 +45,14 @@ class SystemInspector:
         command_runner: CommandRunner | None = None,
         which: Callable[[str], str | None] = shutil.which,
         platform_name: str = sys.platform,
+        provider_configured: Callable[[], bool] | None = None,
     ) -> None:
         self.run_root = run_root
         self.environment = environment if environment is not None else dict(os.environ)
         self.command_runner = command_runner or _run_command
         self.which = which
         self.platform_name = platform_name
+        self.provider_configured = provider_configured
 
     def inspect(self) -> SystemReport:
         checks = [
@@ -277,13 +279,17 @@ class SystemInspector:
         )
 
     def _provider_check(self) -> SystemCheck:
-        configured = bool(
-            self.environment.get("STRIX_LLM")
-            and (
-                self.environment.get("LLM_API_KEY")
-                or self.environment.get("OPENAI_API_KEY")
-                or self.environment.get("ANTHROPIC_API_KEY")
-                or self.environment.get("GEMINI_API_KEY")
+        configured = (
+            self.provider_configured()
+            if self.provider_configured is not None
+            else bool(
+                self.environment.get("STRIX_LLM")
+                and (
+                    self.environment.get("LLM_API_KEY")
+                    or self.environment.get("OPENAI_API_KEY")
+                    or self.environment.get("ANTHROPIC_API_KEY")
+                    or self.environment.get("GEMINI_API_KEY")
+                )
             )
         )
         return SystemCheck(

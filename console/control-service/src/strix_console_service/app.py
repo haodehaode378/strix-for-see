@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hmac
+import os
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Annotated
@@ -12,14 +15,32 @@ from fastapi.responses import FileResponse
 
 from strix_console_service import __version__
 from strix_console_service.contracts import (
+    CreateScanRequest,
     DiagnosticReport,
     HealthResponse,
     LocalRunsResponse,
     LocalRunSummary,
+    ProviderConfigRequest,
+    ProviderStatus,
+    ProviderTestResult,
+    ScanListResponse,
+    ScanSummary,
     SessionResponse,
     SystemReport,
+    TerminateScanRequest,
 )
 from strix_console_service.local_runs import LocalRunIndexer, RunRoot
+from strix_console_service.provider import (
+    ProviderConfigurationError,
+    ProviderService,
+    default_credential_store,
+)
+from strix_console_service.scan_manager import (
+    ScanManager,
+    ScanManagerError,
+    StrixProcessAdapter,
+)
+from strix_console_service.scan_validation import ScanValidationError
 from strix_console_service.system_checks import SystemInspector
 
 
@@ -31,25 +52,55 @@ class _AppServices:
         *,
         run_indexer: LocalRunIndexer,
         system_inspector: SystemInspector,
+        provider_service: ProviderService,
+        scan_manager: ScanManager,
     ) -> None:
         self.run_indexer = run_indexer
         self.system_inspector = system_inspector
+        self.provider_service = provider_service
+        self.scan_manager = scan_manager
 
 
 def _build_services(
     *,
     run_roots: list[RunRoot] | None = None,
     system_inspector: SystemInspector | None = None,
+    provider_service: ProviderService | None = None,
+    scan_manager: ScanManager | None = None,
 ) -> _AppServices:
     run_indexer = (
         LocalRunIndexer(run_roots)
         if run_roots is not None
         else LocalRunIndexer.from_environment()
     )
-    inspector = system_inspector or SystemInspector(run_root=run_indexer.default_root)
+    state_root = run_indexer.default_root.parent / "state"
+    provider = provider_service or ProviderService(
+        config_path=state_root / "provider.json",
+        credential_store=default_credential_store(),
+    )
+
+    def provider_ready() -> bool:
+        provider_status = provider.status()
+        return provider_status.configured and provider_status.connection_verified
+
+    inspector = system_inspector or SystemInspector(
+        run_root=run_indexer.default_root,
+        provider_configured=provider_ready,
+    )
+    manager = scan_manager or ScanManager(
+        state_path=state_root / "scan-queue.json",
+        provider_service=provider,
+        process_adapter=StrixProcessAdapter(
+            run_root=run_indexer.default_root,
+            strix_path=os.environ.get("STRIX_CONSOLE_STRIX_PATH"),
+        ),
+        readiness=lambda: inspector.inspect().summary.ready,
+    )
     return _AppServices(
         run_indexer=run_indexer,
         system_inspector=inspector,
+        provider_service=provider,
+        scan_manager=manager,
     )
 
 
@@ -80,6 +131,8 @@ def create_app(
     bootstrap_token: str | None = None,
     run_roots: list[RunRoot] | None = None,
     system_inspector: SystemInspector | None = None,
+    provider_service: ProviderService | None = None,
+    scan_manager: ScanManager | None = None,
 ) -> FastAPI:
     """Create an isolated service instance with per-process in-memory credentials."""
 
@@ -87,13 +140,28 @@ def create_app(
         access_token=access_token or secrets.token_urlsafe(32),
         bootstrap_token=bootstrap_token or secrets.token_urlsafe(32),
     )
-    services = _build_services(run_roots=run_roots, system_inspector=system_inspector)
+    services = _build_services(
+        run_roots=run_roots,
+        system_inspector=system_inspector,
+        provider_service=provider_service,
+        scan_manager=scan_manager,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        services.scan_manager.start()
+        try:
+            yield
+        finally:
+            services.scan_manager.close()
+
     app = FastAPI(
         title="Strix Console Control Service",
         version=__version__,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.session = session
     app.state.services = services
@@ -107,7 +175,12 @@ def create_app(
         ],
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["X-Strix-Access-Token", "X-Strix-Bootstrap"],
+        allow_headers=[
+            "Content-Type",
+            "X-Idempotency-Key",
+            "X-Strix-Access-Token",
+            "X-Strix-Bootstrap",
+        ],
     )
 
     def require_access_token(
@@ -169,6 +242,96 @@ def create_app(
     )
     def diagnostics() -> DiagnosticReport:
         return services.system_inspector.diagnostics()
+
+    @app.get(
+        "/api/provider",
+        response_model=ProviderStatus,
+        dependencies=[Depends(require_access_token)],
+    )
+    def provider_status() -> ProviderStatus:
+        return services.provider_service.status()
+
+    @app.post(
+        "/api/provider",
+        response_model=ProviderStatus,
+        dependencies=[Depends(require_access_token)],
+    )
+    def configure_provider(request: ProviderConfigRequest) -> ProviderStatus:
+        try:
+            return services.provider_service.configure(request)
+        except (ProviderConfigurationError, OSError) as error:
+            detail = (
+                error.code
+                if isinstance(error, ProviderConfigurationError)
+                else "secretStoreFailed"
+            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from error
+
+    @app.post(
+        "/api/provider/test",
+        response_model=ProviderTestResult,
+        dependencies=[Depends(require_access_token)],
+    )
+    def test_provider() -> ProviderTestResult:
+        return services.provider_service.test_connectivity()
+
+    @app.post(
+        "/api/scans",
+        response_model=ScanSummary,
+        dependencies=[Depends(require_access_token)],
+    )
+    def create_scan(
+        request: CreateScanRequest,
+        x_idempotency_key: Annotated[str | None, Header()] = None,
+    ) -> ScanSummary:
+        try:
+            return services.scan_manager.create(request, x_idempotency_key or "")
+        except (ScanValidationError, ScanManagerError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error.code,
+            ) from error
+
+    @app.get(
+        "/api/scans",
+        response_model=ScanListResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def scans() -> ScanListResponse:
+        return services.scan_manager.list_scans()
+
+    @app.get(
+        "/api/scans/{scan_id}",
+        response_model=ScanSummary,
+        dependencies=[Depends(require_access_token)],
+    )
+    def scan(scan_id: str) -> ScanSummary:
+        result = services.scan_manager.get(scan_id)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scanNotFound")
+        return result
+
+    @app.post(
+        "/api/scans/{scan_id}/stop",
+        response_model=ScanSummary,
+        dependencies=[Depends(require_access_token)],
+    )
+    def stop_scan(scan_id: str) -> ScanSummary:
+        try:
+            return services.scan_manager.stop(scan_id)
+        except ScanManagerError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
+
+    @app.post(
+        "/api/scans/{scan_id}/terminate",
+        response_model=ScanSummary,
+        dependencies=[Depends(require_access_token)],
+    )
+    def terminate_scan(scan_id: str, request: TerminateScanRequest) -> ScanSummary:
+        try:
+            return services.scan_manager.terminate(scan_id, confirmed=request.confirmed)
+        except ScanManagerError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=error.code) from error
 
     @app.get(
         "/api/local-runs",

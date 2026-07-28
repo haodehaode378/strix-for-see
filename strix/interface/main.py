@@ -6,6 +6,7 @@ Strix Agent Interface
 import argparse
 import asyncio
 import os
+import re
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -407,6 +408,14 @@ def _positive_budget(value: str) -> float:
     return budget
 
 
+def _safe_run_name(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", value) or value in {".", ".."}:
+        raise argparse.ArgumentTypeError(
+            "must be 1-80 safe filename characters and cannot be '.' or '..'"
+        )
+    return value
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
@@ -578,6 +587,11 @@ Examples:
             "and agent topology. Skips fresh run-name generation."
         ),
     )
+    parser.add_argument(
+        "--run-name",
+        type=_safe_run_name,
+        help="Explicit name for a fresh run directory. Cannot be combined with --resume.",
+    )
 
     args = parser.parse_args()
 
@@ -602,9 +616,9 @@ Examples:
     args.user_explicit_instruction = args.instruction if args.resume else None
 
     if args.resume:
-        if args.target or args.target_list or args.mount:
+        if args.target or args.target_list or args.mount or args.run_name:
             parser.error(
-                "Cannot combine --resume with --target/--target-list/--mount. "
+                "Cannot combine --resume with --target/--target-list/--mount/--run-name. "
                 "--resume picks up where the prior run left off, including the "
                 "original target list."
             )
@@ -901,7 +915,7 @@ def main() -> None:
 
     persist_current()
 
-    args.run_name = args.resume or generate_run_name(args.targets_info)
+    args.run_name = args.resume or args.run_name or generate_run_name(args.targets_info)
 
     if not args.resume:
         for target_info in args.targets_info:

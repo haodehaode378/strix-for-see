@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 RUNS_DIR_NAME = "strix_runs"
 RUNTIME_STATE_DIR_NAME = ".state"
 RUN_RECORD_FILENAME = "run.json"
+RUNS_DIR_ENV = "STRIX_RUNS_DIR"
 
 
 def run_dir_for(run_name: str, *, cwd: Path | None = None) -> Path:
-    base = cwd or Path.cwd()
-    return base / RUNS_DIR_NAME / run_name
+    return runs_base_dir(cwd=cwd) / run_name
 
 
 def runtime_state_dir(run_dir: Path) -> Path:
@@ -24,6 +25,9 @@ def run_record_path(run_dir: Path) -> Path:
 
 
 def runs_base_dir(*, cwd: Path | None = None) -> Path:
+    configured = os.environ.get(RUNS_DIR_ENV) if cwd is None else None
+    if configured:
+        return Path(configured).expanduser().resolve()
     base = cwd or Path.cwd()
     return base / RUNS_DIR_NAME
 
