@@ -38,15 +38,17 @@ Remove those separately only after confirming the local scan records are no long
 2. Generate the Tauri updater key once and store the private key only as
    `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` GitHub secrets. Store its
    public key as `TAURI_UPDATER_PUBLIC_KEY`.
-3. Publish the compatible Sandbox image to
-   `ghcr.io/haodehaode378/strix-for-see-sandbox:<version>` and record its digest and compressed byte
-   size in `sandbox.json`.
+3. Update `containers/SANDBOX_VERSION` when the image changes. The release workflow publishes the
+   compatible image to `ghcr.io/haodehaode378/strix-for-see-sandbox:<version>` and records its
+   digest and compressed layer size in `sandbox.json`.
 4. Push tag `v<console-version>`. The Console release workflow builds the two sidecars, bilingual
    per-user NSIS installer, updater signature, and `latest.json`.
 5. On a clean Windows VM, install, run Environment checks, browse a local record, start and stop an
    authorized test scan, check both update paths, uninstall, and record the evidence in the release.
 
 Tags named `strix-v*` remain reserved for the upstream standalone Strix release workflow.
+After the first workflow run, set the `strix-for-see-sandbox` package visibility to **Public** in
+GitHub Packages so Docker Desktop can pull it without a registry login.
 
 The Tauri updater key authenticates update artifacts but does not provide Windows Authenticode code
 signing. Without a separately purchased/configured Windows code-signing certificate, SmartScreen

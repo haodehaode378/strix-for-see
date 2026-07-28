@@ -23,7 +23,10 @@ RUN mkdir -p /out/bin && \
 # ---------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
+ARG SANDBOX_VERSION=dev
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
+LABEL org.opencontainers.image.source="https://github.com/haodehaode378/strix-for-see"
+LABEL io.strix.sandbox.version="${SANDBOX_VERSION}"
 
 RUN apt-get update && \
     apt-get install -y kali-archive-keyring sudo && \
