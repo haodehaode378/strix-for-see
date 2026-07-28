@@ -1,8 +1,8 @@
 # Strix Console Development
 
 This directory contains the independent React/Tauri application and its loopback-only Python
-control service. Phase 1 provides the application shell, language and theme foundations, typed
-health contract, and in-memory session authentication. It does not run Strix scans.
+control service. Phase 2 adds read-only device readiness checks, a disposable local-run index,
+record details, and allowlisted artifact downloads. It does not run Strix scans or start Docker.
 
 ## Prerequisites
 
@@ -31,6 +31,22 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Tokens remain in process memory; never add them to `.env` files.
 
+## Phase 2 Configuration
+
+The default writable record root is `%LOCALAPPDATA%\StrixConsole\runs`. Additional roots are
+read-only and separated with Windows' `;` path separator:
+
+```powershell
+$env:STRIX_CONSOLE_RUN_ROOTS = "D:\strix_runs;E:\archive\strix_runs"
+$env:STRIX_CONSOLE_STRIX_PATH = "C:\Program Files\Strix Console\strix"
+$env:STRIX_CONSOLE_SANDBOX_IMAGE = "ghcr.io/haodehaode378/strix-for-see-sandbox:latest"
+```
+
+`GET /api/system` and `POST /api/system/recheck` run bounded, non-mutating probes. Diagnostics from
+`GET /api/system/diagnostics` redact common credential patterns and the user profile path.
+`GET /api/local-runs` rescans configured roots on every request. Artifact downloads accept only
+known Strix output filenames and cannot escape the indexed run directory.
+
 ## Desktop Development
 
 Install dependencies once with `npm install`, then run:
@@ -39,7 +55,7 @@ Install dependencies once with `npm install`, then run:
 npm run tauri dev
 ```
 
-The Phase 1 desktop shell starts independently. Automatic sidecar launch and secure token handoff
+The desktop shell starts independently. Automatic sidecar launch and secure token handoff
 are release work and must be completed before scan controls are enabled.
 
 ## Checks

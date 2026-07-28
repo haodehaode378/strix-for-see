@@ -4,7 +4,3 @@ export interface ServiceHealth {
   schemaVersion: number;
   platform: "windows";
 }
-
-export interface SessionResponse {
-  accessToken: string;
-}

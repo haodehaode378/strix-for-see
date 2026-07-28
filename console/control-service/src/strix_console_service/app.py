@@ -4,43 +4,53 @@ import hmac
 import secrets
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import FileResponse
 
 from strix_console_service import __version__
+from strix_console_service.contracts import (
+    DiagnosticReport,
+    HealthResponse,
+    LocalRunsResponse,
+    LocalRunSummary,
+    SessionResponse,
+    SystemReport,
+)
+from strix_console_service.local_runs import LocalRunIndexer, RunRoot
+from strix_console_service.system_checks import SystemInspector
 
 
-def _to_camel_case(value: str) -> str:
-    parts = value.split("_")
-    return parts[0] + "".join(part.capitalize() for part in parts[1:])
+class _AppServices:
+    """Process-local service dependencies."""
+
+    def __init__(
+        self,
+        *,
+        run_indexer: LocalRunIndexer,
+        system_inspector: SystemInspector,
+    ) -> None:
+        self.run_indexer = run_indexer
+        self.system_inspector = system_inspector
 
 
-class HealthResponse(BaseModel):
-    """Authenticated service-health contract."""
-
-    model_config = ConfigDict(
-        alias_generator=lambda value: _to_camel_case(value),
-        populate_by_name=True,
+def _build_services(
+    *,
+    run_roots: list[RunRoot] | None = None,
+    system_inspector: SystemInspector | None = None,
+) -> _AppServices:
+    run_indexer = (
+        LocalRunIndexer(run_roots)
+        if run_roots is not None
+        else LocalRunIndexer.from_environment()
     )
-
-    status: Literal["ok"] = "ok"
-    service_version: str = __version__
-    schema_version: int = 1
-    platform: Literal["windows"] = "windows"
-
-
-class SessionResponse(BaseModel):
-    """One-time browser bootstrap response."""
-
-    model_config = ConfigDict(
-        alias_generator=lambda value: _to_camel_case(value),
-        populate_by_name=True,
+    inspector = system_inspector or SystemInspector(run_root=run_indexer.default_root)
+    return _AppServices(
+        run_indexer=run_indexer,
+        system_inspector=inspector,
     )
-
-    access_token: str
 
 
 @dataclass
@@ -63,10 +73,13 @@ class SessionState:
             self.bootstrap_consumed = True
             return self.access_token
 
+
 def create_app(
     *,
     access_token: str | None = None,
     bootstrap_token: str | None = None,
+    run_roots: list[RunRoot] | None = None,
+    system_inspector: SystemInspector | None = None,
 ) -> FastAPI:
     """Create an isolated service instance with per-process in-memory credentials."""
 
@@ -74,6 +87,7 @@ def create_app(
         access_token=access_token or secrets.token_urlsafe(32),
         bootstrap_token=bootstrap_token or secrets.token_urlsafe(32),
     )
+    services = _build_services(run_roots=run_roots, system_inspector=system_inspector)
     app = FastAPI(
         title="Strix Console Control Service",
         version=__version__,
@@ -82,6 +96,7 @@ def create_app(
         openapi_url=None,
     )
     app.state.session = session
+    app.state.services = services
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -130,6 +145,63 @@ def create_app(
     )
     def health() -> HealthResponse:
         return HealthResponse()
+
+    @app.get(
+        "/api/system",
+        response_model=SystemReport,
+        dependencies=[Depends(require_access_token)],
+    )
+    def system_report() -> SystemReport:
+        return services.system_inspector.inspect()
+
+    @app.post(
+        "/api/system/recheck",
+        response_model=SystemReport,
+        dependencies=[Depends(require_access_token)],
+    )
+    def recheck_system() -> SystemReport:
+        return services.system_inspector.inspect()
+
+    @app.get(
+        "/api/system/diagnostics",
+        response_model=DiagnosticReport,
+        dependencies=[Depends(require_access_token)],
+    )
+    def diagnostics() -> DiagnosticReport:
+        return services.system_inspector.diagnostics()
+
+    @app.get(
+        "/api/local-runs",
+        response_model=LocalRunsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def local_runs() -> LocalRunsResponse:
+        return services.run_indexer.list_runs()
+
+    @app.get(
+        "/api/local-runs/{run_id}",
+        response_model=LocalRunSummary,
+        dependencies=[Depends(require_access_token)],
+    )
+    def local_run(run_id: str) -> LocalRunSummary:
+        run = services.run_indexer.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        return run
+
+    @app.get(
+        "/api/local-runs/{run_id}/artifacts/{artifact_name}",
+        dependencies=[Depends(require_access_token)],
+    )
+    def local_run_artifact(run_id: str, artifact_name: str) -> FileResponse:
+        artifact = services.run_indexer.resolve_artifact(run_id, artifact_name)
+        if artifact is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+        return FileResponse(
+            path=artifact.path,
+            media_type=artifact.media_type,
+            filename=artifact.path.name,
+        )
 
     return app
 

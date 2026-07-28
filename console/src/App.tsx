@@ -12,6 +12,8 @@ import { AppShell, type NavigationItem } from "./components/layout/AppShell";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EmptySectionPage } from "./pages/EmptySectionPage";
 import { EnvironmentPage } from "./pages/EnvironmentPage";
+import { LocalRunDetailPage } from "./pages/LocalRunDetailPage";
+import { LocalRunsPage } from "./pages/LocalRunsPage";
 import { useLocale } from "./shared/i18n/useLocale";
 import { useNavigation } from "./shared/navigation/useNavigation";
 
@@ -30,7 +32,13 @@ export function App() {
   ];
 
   const page = (() => {
+    if (path.startsWith("/local-runs/")) {
+      return <LocalRunDetailPage id={decodeURIComponent(path.slice("/local-runs/".length))} />;
+    }
+
     switch (path) {
+      case "/setup":
+        return <EnvironmentPage setup />;
       case "/scans/new":
         return (
           <EmptySectionPage
@@ -48,13 +56,7 @@ export function App() {
           />
         );
       case "/local-runs":
-        return (
-          <EmptySectionPage
-            title={t("localRuns.title")}
-            description={t("localRuns.phaseNotice")}
-            icon={FileSearch}
-          />
-        );
+        return <LocalRunsPage />;
       case "/findings":
         return (
           <EmptySectionPage
