@@ -5,6 +5,7 @@ description = "Loopback-only control service for Strix Console"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi==0.140.0",
+  "reportlab>=4.0,<6",
   "uvicorn==0.51.0",
 ]
 
@@ -17,6 +18,7 @@ dev = [
   "mypy>=1.16,<2",
   "pytest>=8.3,<10",
   "ruff>=0.11,<1",
+  "types-reportlab>=4.4,<5",
 ]
 
 [build-system]

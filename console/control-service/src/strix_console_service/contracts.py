@@ -248,6 +248,96 @@ class SteeringResponse(CamelModel):
     event_id: str
 
 
+FindingSeverity = Literal["critical", "high", "medium", "low"]
+FindingWorkflowState = Literal["pending", "confirmed", "acceptedRisk", "fixed", "falsePositive"]
+
+
+class FindingLocation(CamelModel):
+    """Bounded source or endpoint location attached to a finding."""
+
+    file: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    label: str | None = None
+    snippet: str | None = None
+
+
+class FindingOccurrence(CamelModel):
+    """One appearance of a stable finding in a local Strix run."""
+
+    run_id: str
+    run_name: str
+    target: str | None = None
+    source_finding_id: str | None = None
+    observed_at: str | None = None
+
+
+class FindingHistoryEntry(CamelModel):
+    """Append-only local review event."""
+
+    id: str
+    occurred_at: datetime
+    kind: Literal["stateChanged", "noteAdded"]
+    from_state: FindingWorkflowState | None = None
+    to_state: FindingWorkflowState | None = None
+    note: str | None = None
+
+
+class Finding(CamelModel):
+    """Safe aggregate of one issue across local runs."""
+
+    id: str
+    fingerprint_version: int = 1
+    title: str
+    severity: FindingSeverity
+    workflow_state: FindingWorkflowState = "pending"
+    target: str | None = None
+    description: str | None = None
+    impact: str | None = None
+    technical_analysis: str | None = None
+    evidence: str | None = None
+    poc_description: str | None = None
+    poc_script_code: str | None = None
+    remediation_steps: str | None = None
+    endpoint: str | None = None
+    method: str | None = None
+    cve: str | None = None
+    cwe: str | None = None
+    cvss: float | None = None
+    locations: list[FindingLocation] = Field(default_factory=list)
+    occurrences: list[FindingOccurrence] = Field(default_factory=list)
+    history: list[FindingHistoryEntry] = Field(default_factory=list)
+
+
+class FindingsResponse(CamelModel):
+    schema_version: int = 1
+    generated_at: datetime
+    findings: list[Finding]
+    severity_counts: SeverityCounts
+
+
+class UpdateFindingRequest(CamelModel):
+    workflow_state: FindingWorkflowState | None = None
+    note: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
+ReportFormat = Literal["html", "pdf", "markdown", "json"]
+ReportLocale = Literal["zh-CN", "en-US"]
+
+
+class ReportRedaction(CamelModel):
+    omit_evidence: bool = True
+    omit_poc: bool = True
+    omit_paths: bool = True
+
+
+class ExportFindingsRequest(CamelModel):
+    format: ReportFormat
+    locale: ReportLocale = "zh-CN"
+    finding_ids: list[str] = Field(default_factory=list, max_length=500)
+    redaction: ReportRedaction = Field(default_factory=ReportRedaction)
+
+
 ProviderKind = Literal["openai", "anthropic", "gemini", "openaiCompatible", "ollama"]
 
 

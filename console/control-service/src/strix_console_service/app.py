@@ -11,12 +11,15 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from strix_console_service import __version__
 from strix_console_service.contracts import (
     CreateScanRequest,
     DiagnosticReport,
+    ExportFindingsRequest,
+    Finding,
+    FindingsResponse,
     HealthResponse,
     LocalRunsResponse,
     LocalRunSummary,
@@ -30,6 +33,7 @@ from strix_console_service.contracts import (
     SteeringResponse,
     SystemReport,
     TerminateScanRequest,
+    UpdateFindingRequest,
 )
 from strix_console_service.events import (
     EventStore,
@@ -37,6 +41,7 @@ from strix_console_service.events import (
     heartbeat_frame,
     sse_frames,
 )
+from strix_console_service.findings import FindingStore, FindingStoreError
 from strix_console_service.local_runs import LocalRunIndexer, RunRoot
 from strix_console_service.provider import (
     ProviderConfigurationError,
@@ -63,12 +68,14 @@ class _AppServices:
         provider_service: ProviderService,
         scan_manager: ScanManager,
         event_store: EventStore,
+        finding_store: FindingStore,
     ) -> None:
         self.run_indexer = run_indexer
         self.system_inspector = system_inspector
         self.provider_service = provider_service
         self.scan_manager = scan_manager
         self.event_store = event_store
+        self.finding_store = finding_store
 
 
 def _build_services(
@@ -117,6 +124,7 @@ def _build_services(
         provider_service=provider,
         scan_manager=manager,
         event_store=manager.event_store,
+        finding_store=FindingStore(run_indexer, state_root / "findings.json"),
     )
 
 
@@ -190,7 +198,7 @@ def create_app(
             "tauri://localhost",
         ],
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH"],
         allow_headers=[
             "Content-Type",
             "Last-Event-ID",
@@ -398,6 +406,72 @@ def create_app(
                 "Cache-Control": "no-cache, no-transform",
                 "X-Accel-Buffering": "no",
             },
+        )
+
+    @app.get(
+        "/api/scans/{scan_id}/findings",
+        response_model=FindingsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def scan_findings(scan_id: str) -> FindingsResponse:
+        scan_result = services.scan_manager.get(scan_id)
+        if scan_result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="scanNotFound")
+        return services.finding_store.list_findings(run_name=scan_result.engine_run_name)
+
+    @app.get(
+        "/api/findings",
+        response_model=FindingsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def findings(run_name: str | None = Query(default=None, max_length=255)) -> FindingsResponse:
+        return services.finding_store.list_findings(run_name=run_name)
+
+    @app.get(
+        "/api/findings/{finding_id}",
+        response_model=Finding,
+        dependencies=[Depends(require_access_token)],
+    )
+    def finding(finding_id: str) -> Finding:
+        result = services.finding_store.get(finding_id)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="findingNotFound")
+        return result
+
+    @app.patch(
+        "/api/findings/{finding_id}",
+        response_model=Finding,
+        dependencies=[Depends(require_access_token)],
+    )
+    def update_finding(finding_id: str, request: UpdateFindingRequest) -> Finding:
+        try:
+            return services.finding_store.update(finding_id, request)
+        except FindingStoreError as error:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error.code == "findingNotFound"
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(status_code=code, detail=error.code) from error
+
+    @app.post(
+        "/api/findings/export",
+        dependencies=[Depends(require_access_token)],
+    )
+    def export_findings(request: ExportFindingsRequest) -> Response:
+        try:
+            payload, media_type, filename = services.finding_store.export(request)
+        except FindingStoreError as error:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error.code == "findingNotFound"
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(status_code=code, detail=error.code) from error
+        return Response(
+            payload,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
     @app.get(
