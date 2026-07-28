@@ -231,7 +231,11 @@ jobs:
             throw "Installed Strix Console entry was not found"
           }
 
-          $executables = Get-ChildItem -LiteralPath $entry.InstallLocation -Filter *.exe -Recurse
+          $installLocation = $entry.InstallLocation.Trim().Trim('"')
+          if (-not (Test-Path -LiteralPath $installLocation -PathType Container)) {
+            throw "Installed Strix Console directory was not found"
+          }
+          $executables = Get-ChildItem -LiteralPath $installLocation -Filter *.exe -Recurse
           $app = $executables |
             Where-Object Name -In @("strix-console.exe", "Strix Console.exe") |
             Select-Object -First 1
