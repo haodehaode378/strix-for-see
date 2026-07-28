@@ -50,17 +50,21 @@ async function getSessionToken(): Promise<string> {
   return sessionToken;
 }
 
+export async function controlServiceFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const token = await getSessionToken();
+  const headers = new Headers(init.headers);
+  headers.set("X-Strix-Access-Token", token);
+  return fetch(`${SERVICE_BASE_URL}${path}`, { ...init, headers });
+}
+
 export async function controlServiceJson<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const token = await getSessionToken();
-  const headers = new Headers(init.headers);
-  headers.set("X-Strix-Access-Token", token);
-  const response = await fetch(`${SERVICE_BASE_URL}${path}`, {
-    ...init,
-    headers,
-  });
+  const response = await controlServiceFetch(path, init);
   if (!response.ok) {
     let code = `http${response.status}`;
     try {

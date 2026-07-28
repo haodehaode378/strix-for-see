@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { AppShell, type NavigationItem } from "./components/layout/AppShell";
+import { DesktopBridge } from "./components/scan/DesktopBridge";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EmptySectionPage } from "./pages/EmptySectionPage";
 import { EnvironmentPage } from "./pages/EnvironmentPage";
@@ -74,5 +75,10 @@ export function App() {
     }
   })();
 
-  return <AppShell navigation={navigation}>{page}</AppShell>;
+  return (
+    <>
+      <DesktopBridge />
+      <AppShell navigation={navigation}>{page}</AppShell>
+    </>
+  );
 }

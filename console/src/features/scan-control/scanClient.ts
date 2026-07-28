@@ -6,6 +6,7 @@ import type {
   ProviderTestResult,
   Scan,
   ScanListResponse,
+  SteeringResponse,
 } from "./contracts";
 
 export function getScans(signal?: AbortSignal): Promise<ScanListResponse> {
@@ -41,6 +42,14 @@ export function terminateScan(id: string): Promise<Scan> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirmed: true }),
+  });
+}
+
+export function steerScan(id: string, message: string): Promise<SteeringResponse> {
+  return controlServiceJson<SteeringResponse>(`/api/scans/${id}/steering`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
   });
 }
 

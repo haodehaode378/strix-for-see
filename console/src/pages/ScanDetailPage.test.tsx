@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "../shared/i18n/LocaleProvider";
 import { NavigationProvider } from "../shared/navigation/NavigationProvider";
@@ -45,12 +45,38 @@ vi.mock("../features/scan-control/useScans", () => ({
   }),
 }));
 
+vi.mock("../features/scan-control/useLiveEvents", () => ({
+  useLiveEvents: () => ({
+    connection: "live",
+    events: [
+      {
+        schemaVersion: 1,
+        eventId: "1",
+        scanId: "scan-id",
+        occurredAt: "2026-07-28T02:01:01Z",
+        type: "agent.updated",
+        actor: { kind: "agent", id: "root" },
+        payload: {
+          id: "root",
+          name: "strix",
+          parentId: null,
+          status: "running",
+          task: "Review the authorized target",
+        },
+      },
+    ],
+  }),
+}));
+
 vi.mock("../features/scan-control/scanClient", () => ({
   stopScan: vi.fn(),
+  steerScan: vi.fn(),
   terminateScan: terminateMock,
 }));
 
 describe("ScanDetailPage", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     terminateMock.mockReset();
     terminateMock.mockResolvedValue({});
@@ -77,5 +103,21 @@ describe("ScanDetailPage", () => {
       screen.getByRole("button", { name: "Confirm immediate termination" }),
     );
     await waitFor(() => expect(terminateMock).toHaveBeenCalledWith("scan-id"));
+  });
+
+  it("renders the resumable live workspace and agent state", () => {
+    render(
+      <LocaleProvider>
+        <NavigationProvider>
+          <ScanDetailPage id="scan-id" />
+        </NavigationProvider>
+      </LocaleProvider>,
+    );
+
+    expect(screen.getByText("Live workspace")).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
+    expect(screen.getByText("strix")).toBeInTheDocument();
+    expect(screen.getByText("Review the authorized target")).toBeInTheDocument();
   });
 });

@@ -88,3 +88,27 @@ export interface ProviderTestResult {
   ok: boolean;
   issue: string | null;
 }
+
+export type LiveConnectionState =
+  | "connecting"
+  | "live"
+  | "reconnecting"
+  | "closed";
+
+export interface ScanEvent {
+  schemaVersion: number;
+  eventId: string;
+  scanId: string;
+  occurredAt: string;
+  type: string;
+  actor: {
+    kind: "scan" | "agent" | "tool" | "runtime" | "operator" | "system";
+    id: string | null;
+  } | null;
+  payload: Record<string, unknown>;
+}
+
+export interface SteeringResponse {
+  accepted: boolean;
+  eventId: string;
+}

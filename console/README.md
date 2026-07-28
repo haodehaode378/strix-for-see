@@ -1,9 +1,10 @@
 # Strix Console Development
 
 This directory contains the independent React/Tauri application and its loopback-only Python
-control service. Phase 3 adds authorized scan creation, provider configuration, a persistent
-single-worker queue, and real Strix process controls. Docker Desktop remains a user-installed
-prerequisite; the console detects it but never installs or silently starts it.
+control service. Phase 4 adds persistent versioned events, resumable live observation, bounded
+steering, tray continuation, and local notifications on top of the Phase 3 scan controls. Docker
+Desktop remains a user-installed prerequisite; the console detects it but never installs or
+silently starts it.
 
 ## Prerequisites
 
@@ -70,6 +71,26 @@ The control service enforces total duration and sends an interrupt for safe stop
 termination is a separately confirmed operation and targets only the tracked child handle.
 Previously active queue entries are reconciled after a service restart and never reported as
 success.
+
+## Live Observability
+
+Normalized events are appended under `%LOCALAPPDATA%\StrixConsole\state\events\<scan-id>.jsonl`
+before delivery. `GET /api/scans/{id}/events` is an authenticated SSE stream; clients reconnect
+with `Last-Event-ID` or `?after=` and receive only later events. Source keys make repeated reads of
+`agents.json`, `agents.db`, `vulnerabilities.json`, and `run.json` idempotent.
+
+Event payloads are bounded and redact authorization headers, cookies, credentials, tokens, and the
+current user profile before reaching the browser. The live workspace retains at most 2,000 recent
+events in memory and exposes Overview, Agents, Activity, Tools, and Runtime views.
+
+`POST /api/scans/{id}/steering` accepts messages only while the scan is running. Messages containing
+secret patterns or new targets are rejected, then accepted guidance is written to that run's local
+`.state/console-steering.jsonl` inbox. Strix acknowledges each message after delivering it once to
+the root Agent.
+
+In desktop mode, closing the main window hides it to the system tray. The tray can reopen the
+window, request a safe stop, or exit. Completion, failure, and critical-finding notifications are
+shown only after the user grants notification permission.
 
 ## Desktop Development
 

@@ -8,11 +8,13 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { LiveWorkspace } from "../components/scan/LiveWorkspace";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ScanStatusBadge } from "../components/ui/ScanStatusBadge";
 import { formatRunDate } from "../features/local-runs/formatRunDate";
 import { stopScan, terminateScan } from "../features/scan-control/scanClient";
 import { useScan } from "../features/scan-control/useScans";
+import { useLiveEvents } from "../features/scan-control/useLiveEvents";
 import type { MessageKey } from "../shared/i18n/messages";
 import { useLocale } from "../shared/i18n/useLocale";
 import { NavigationLink } from "../shared/navigation/NavigationLink";
@@ -30,6 +32,7 @@ const errorKeys: Record<string, MessageKey> = {
 export function ScanDetailPage({ id }: { id: string }) {
   const { locale, t } = useLocale();
   const { scan, state, refresh, setScan } = useScan(id);
+  const { events, connection } = useLiveEvents(id);
   const [busy, setBusy] = useState(false);
   const [confirmTerminate, setConfirmTerminate] = useState(false);
   const [actionError, setActionError] = useState(false);
@@ -81,6 +84,7 @@ export function ScanDetailPage({ id }: { id: string }) {
         description={scan.engineRunName}
         actions={<ScanStatusBadge status={scan.status} />}
       />
+      <LiveWorkspace scan={scan} events={events} connection={connection} />
 
       <div className="mt-7 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
