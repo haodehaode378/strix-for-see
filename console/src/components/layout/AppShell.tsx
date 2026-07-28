@@ -66,7 +66,10 @@ export function AppShell({ navigation, children }: AppShellProps) {
                   [
                     "group flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition duration-200 active:scale-[0.98]",
                     path === item.path ||
-                    (item.path === "/local-runs" && path.startsWith("/local-runs/"))
+                    (item.path === "/local-runs" && path.startsWith("/local-runs/")) ||
+                    (item.path === "/scans" &&
+                      path.startsWith("/scans/") &&
+                      path !== "/scans/new")
                       ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                       : "text-[var(--text-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--text)]",
                   ].join(" ")

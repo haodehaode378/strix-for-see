@@ -14,6 +14,9 @@ import { EmptySectionPage } from "./pages/EmptySectionPage";
 import { EnvironmentPage } from "./pages/EnvironmentPage";
 import { LocalRunDetailPage } from "./pages/LocalRunDetailPage";
 import { LocalRunsPage } from "./pages/LocalRunsPage";
+import { NewScanPage } from "./pages/NewScanPage";
+import { ScanDetailPage } from "./pages/ScanDetailPage";
+import { ScansPage } from "./pages/ScansPage";
 import { useLocale } from "./shared/i18n/useLocale";
 import { useNavigation } from "./shared/navigation/useNavigation";
 
@@ -35,26 +38,17 @@ export function App() {
     if (path.startsWith("/local-runs/")) {
       return <LocalRunDetailPage id={decodeURIComponent(path.slice("/local-runs/".length))} />;
     }
+    if (path.startsWith("/scans/") && path !== "/scans/new") {
+      return <ScanDetailPage id={decodeURIComponent(path.slice("/scans/".length))} />;
+    }
 
     switch (path) {
       case "/setup":
         return <EnvironmentPage setup />;
       case "/scans/new":
-        return (
-          <EmptySectionPage
-            title={t("newScan.title")}
-            description={t("newScan.phaseNotice")}
-            icon={ListPlus}
-          />
-        );
+        return <NewScanPage />;
       case "/scans":
-        return (
-          <EmptySectionPage
-            title={t("scans.title")}
-            description={t("scans.empty")}
-            icon={Activity}
-          />
-        );
+        return <ScansPage />;
       case "/local-runs":
         return <LocalRunsPage />;
       case "/findings":

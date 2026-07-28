@@ -2,6 +2,15 @@ interface SessionResponse {
   accessToken: string;
 }
 
+export class ControlServiceError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+  ) {
+    super(code);
+  }
+}
+
 const SERVICE_BASE_URL =
   import.meta.env.VITE_CONTROL_SERVICE_URL ?? "http://127.0.0.1:43110";
 let sessionToken: string | null = import.meta.env.VITE_CONTROL_TOKEN ?? null;
@@ -46,15 +55,21 @@ export async function controlServiceJson<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const token = await getSessionToken();
+  const headers = new Headers(init.headers);
+  headers.set("X-Strix-Access-Token", token);
   const response = await fetch(`${SERVICE_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      ...init.headers,
-      "X-Strix-Access-Token": token,
-    },
+    headers,
   });
   if (!response.ok) {
-    throw new Error(`Control-service request failed with ${response.status}`);
+    let code = `http${response.status}`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      if (typeof body.detail === "string") code = body.detail;
+    } catch {
+      // The status remains sufficient when an upstream response has no JSON body.
+    }
+    throw new ControlServiceError(response.status, code);
   }
   return (await response.json()) as T;
 }
