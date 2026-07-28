@@ -3,7 +3,7 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'strix-v*'
   workflow_dispatch:
 
 permissions:

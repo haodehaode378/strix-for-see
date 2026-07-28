@@ -1,0 +1,130 @@
+name: Console Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.2"
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}".TrimStart("v")
+          $config = Get-Content console/src-tauri/tauri.conf.json | ConvertFrom-Json
+          if ($config.version -ne $tagVersion) {
+            throw "Tag version $tagVersion does not match Tauri version $($config.version)"
+          }
+
+      - name: Build bundled Strix and control service
+        shell: pwsh
+        run: |
+          uv sync --frozen
+          uv run pyinstaller strix.spec --noconfirm
+          uv run --project console/control-service --with pyinstaller pyinstaller `
+            --noconfirm --onefile --name strix-console-service `
+            --paths console/control-service/src `
+            console/control-service/src/strix_console_service/main.py
+          New-Item -ItemType Directory -Force console/src-tauri/binaries | Out-Null
+          Copy-Item dist/strix.exe `
+            console/src-tauri/binaries/strix-x86_64-pc-windows-msvc.exe
+          Copy-Item dist/strix-console-service.exe `
+            console/src-tauri/binaries/strix-console-service-x86_64-pc-windows-msvc.exe
+
+      - name: Create signed updater release configuration
+        shell: pwsh
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if (-not $env:TAURI_UPDATER_PUBLIC_KEY) {
+            throw "TAURI_UPDATER_PUBLIC_KEY is required"
+          }
+          $releaseConfig = @{
+            bundle = @{
+              externalBin = @(
+                "binaries/strix-console-service",
+                "binaries/strix"
+              )
+            }
+            plugins = @{
+              updater = @{
+                pubkey = $env:TAURI_UPDATER_PUBLIC_KEY
+                endpoints = @(
+                  "https://github.com/haodehaode378/strix-for-see/releases/latest/download/latest.json"
+                )
+                windows = @{ installMode = "passive" }
+              }
+            }
+          }
+          $releaseConfig | ConvertTo-Json -Depth 8 |
+            Set-Content -Encoding utf8 console/src-tauri/tauri.release.conf.json
+
+      - name: Build signed NSIS installer
+        working-directory: console
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci
+          npm run tauri build -- --config src-tauri/tauri.release.conf.json
+
+      - name: Create updater manifest
+        shell: pwsh
+        run: |
+          $bundle = Get-ChildItem console/src-tauri/target/release/bundle/nsis/*.nsis.zip |
+            Select-Object -First 1
+          $signature = Get-Content "$($bundle.FullName).sig" -Raw
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          $downloadUrl = "https://github.com/haodehaode378/strix-for-see/releases/download/${{ github.ref_name }}/$($bundle.Name)"
+          $manifest = @{
+            version = $version
+            notes = "See the GitHub release notes."
+            pub_date = (Get-Date).ToUniversalTime().ToString("o")
+            platforms = @{
+              "windows-x86_64" = @{
+                url = $downloadUrl
+                signature = $signature.Trim()
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 6 |
+            Set-Content -Encoding utf8 console/src-tauri/target/release/bundle/nsis/latest.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          generate_release_notes: true
+          files: |
+            console/src-tauri/target/release/bundle/nsis/*.exe
+            console/src-tauri/target/release/bundle/nsis/*.nsis.zip
+            console/src-tauri/target/release/bundle/nsis/*.sig
+            console/src-tauri/target/release/bundle/nsis/latest.json

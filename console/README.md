@@ -1,10 +1,9 @@
 # Strix Console Development
 
 This directory contains the independent React/Tauri application and its loopback-only Python
-control service. Phase 4 adds persistent versioned events, resumable live observation, bounded
-steering, tray continuation, and local notifications on top of the Phase 3 scan controls. Docker
-Desktop remains a user-installed prerequisite; the console detects it but never installs or
-silently starts it.
+control service. The hardened desktop package bundles the control service and Strix, while Docker
+Desktop remains a user-installed prerequisite that the console detects but never installs or
+silently starts.
 
 ## Prerequisites
 
@@ -108,9 +107,17 @@ Install dependencies once with `npm install`, then run:
 npm run tauri dev
 ```
 
-The desktop shell starts independently. Automatic production sidecar launch and secure token
-handoff remain release-packaging work; browser development can exercise scan control by starting
-the loopback service explicitly.
+Development starts the desktop shell independently unless `STRIX_CONSOLE_SERVICE_PATH` points to a
+built sidecar. Production installers start the bundled sidecar, pass one-time in-memory
+credentials, and monitor the desktop parent process. Browser development continues to start the
+loopback service explicitly.
+
+## Updates and Windows Release
+
+The Settings page checks stable application releases and compatible Sandbox manifests from fixed
+project URLs. Application installation and Sandbox pulls require separate confirmation and are
+blocked while work is queued or running. Existing Docker images are never removed automatically.
+See the [Windows installation and release guide](../docs/console/windows-release.md).
 
 ## Checks
 
