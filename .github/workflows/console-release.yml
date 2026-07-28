@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -116,10 +117,12 @@ jobs:
       - name: Verify release version
         shell: pwsh
         run: |
-          $tagVersion = "${{ github.ref_name }}".TrimStart("v")
           $config = Get-Content console/src-tauri/tauri.conf.json | ConvertFrom-Json
-          if ($config.version -ne $tagVersion) {
-            throw "Tag version $tagVersion does not match Tauri version $($config.version)"
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            $tagVersion = "${{ github.ref_name }}".TrimStart("v")
+            if ($config.version -ne $tagVersion) {
+              throw "Tag version $tagVersion does not match Tauri version $($config.version)"
+            }
           }
 
       - name: Build bundled Strix and control service
@@ -180,9 +183,10 @@ jobs:
           $bundle = Get-ChildItem console/src-tauri/target/release/bundle/nsis/*-setup.exe |
             Select-Object -First 1
           $signature = Get-Content "$($bundle.FullName).sig" -Raw
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $config = Get-Content console/src-tauri/tauri.conf.json | ConvertFrom-Json
+          $version = $config.version
           $assetName = [uri]::EscapeDataString($bundle.Name)
-          $downloadUrl = "https://github.com/haodehaode378/strix-for-see/releases/download/${{ github.ref_name }}/$assetName"
+          $downloadUrl = "https://github.com/haodehaode378/strix-for-see/releases/download/v$version/$assetName"
           $manifest = @{
             version = $version
             notes = "See the GitHub release notes."
@@ -203,6 +207,7 @@ jobs:
           path: console/src-tauri/target/release/bundle/nsis
 
       - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
@@ -211,3 +216,15 @@ jobs:
             console/src-tauri/target/release/bundle/nsis/*.sig
             console/src-tauri/target/release/bundle/nsis/latest.json
             console/src-tauri/target/release/bundle/nsis/sandbox.json
+
+      - name: Upload release candidate
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: strix-console-release-candidate
+          path: |
+            console/src-tauri/target/release/bundle/nsis/*.exe
+            console/src-tauri/target/release/bundle/nsis/*.sig
+            console/src-tauri/target/release/bundle/nsis/latest.json
+            console/src-tauri/target/release/bundle/nsis/sandbox.json
+          if-no-files-found: error
