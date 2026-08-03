@@ -33,12 +33,14 @@ import { useLocale } from "../shared/i18n/useLocale";
 import { useNavigation } from "../shared/navigation/useNavigation";
 
 const steps: MessageKey[] = [
+  "newScan.step.provider",
   "newScan.step.target",
   "newScan.step.scope",
   "newScan.step.options",
-  "newScan.step.provider",
   "newScan.step.review",
 ];
+
+type BoundaryPreset = "strict" | "standard" | "custom";
 
 const targetTypes: Array<{
   value: TargetType;
@@ -114,16 +116,17 @@ export function NewScanPage() {
   const readiness = useSystemReadiness();
   const [step, setStep] = useState(0);
   const [request, setRequest] = useState<CreateScanRequest>(initialRequest);
+  const [boundaryPreset, setBoundaryPreset] = useState<BoundaryPreset>("strict");
   const [provider, setProvider] = useState<ProviderStatus | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<MessageKey | null>(null);
   const idempotencyKey = useRef(crypto.randomUUID());
 
   const canContinue = useMemo(() => {
-    if (step === 0) return request.target.trim().length > 0;
-    if (step === 3) {
+    if (step === 0) {
       return provider?.configured === true && provider.connectionVerified;
     }
+    if (step === 1) return request.target.trim().length > 0;
     if (step === 4) {
       return (
         request.authorizationConfirmed &&
@@ -174,16 +177,25 @@ export function NewScanPage() {
       </ol>
 
       <div className="mt-6">
-        {step === 0 ? (
-          <TargetStep request={request} setRequest={setRequest} />
-        ) : null}
+        {step === 0 ? <ProviderPanel onStatus={setProvider} /> : null}
         {step === 1 ? (
-          <ScopeStep request={request} setRequest={setRequest} />
+          <TargetStep
+            request={request}
+            setRequest={setRequest}
+            setPreset={setBoundaryPreset}
+          />
         ) : null}
         {step === 2 ? (
+          <ScopeStep
+            request={request}
+            setRequest={setRequest}
+            preset={boundaryPreset}
+            setPreset={setBoundaryPreset}
+          />
+        ) : null}
+        {step === 3 ? (
           <OptionsStep request={request} setRequest={setRequest} />
         ) : null}
-        {step === 3 ? <ProviderPanel onStatus={setProvider} /> : null}
         {step === 4 ? (
           <ReviewStep
             request={request}
@@ -243,7 +255,8 @@ export function NewScanPage() {
 function TargetStep({
   request,
   setRequest,
-}: ScanStepProps) {
+  setPreset,
+}: ScanStepProps & { setPreset: (preset: BoundaryPreset) => void }) {
   const { t } = useLocale();
   const placeholder: Record<TargetType, MessageKey> = {
     web: "newScan.placeholder.web",
@@ -261,13 +274,15 @@ function TargetStep({
             <button
               key={type.value}
               type="button"
-              onClick={() =>
+              onClick={() => {
+                setPreset("strict");
                 setRequest((current) => ({
                   ...current,
                   targetType: type.value,
                   target: "",
-                }))
-              }
+                  scope: initialRequest.scope,
+                }));
+              }}
               className={`rounded-2xl border p-4 text-left transition active:scale-[0.98] ${
                 request.targetType === type.value
                   ? "border-[var(--accent)] bg-[var(--accent-soft)]"
@@ -289,9 +304,14 @@ function TargetStep({
         <Field label={t("newScan.primaryTarget")}>
           <input
             value={request.target}
-            onChange={(event) =>
-              setRequest((current) => ({ ...current, target: event.target.value }))
-            }
+            onChange={(event) => {
+              setPreset("strict");
+              setRequest((current) => ({
+                ...current,
+                target: event.target.value,
+                scope: suggestScope(current.targetType, event.target.value, "strict"),
+              }));
+            }}
             placeholder={t(placeholder[request.targetType])}
             className={inputClass}
             autoFocus
@@ -302,7 +322,15 @@ function TargetStep({
   );
 }
 
-function ScopeStep({ request, setRequest }: ScanStepProps) {
+function ScopeStep({
+  request,
+  setRequest,
+  preset,
+  setPreset,
+}: ScanStepProps & {
+  preset: BoundaryPreset;
+  setPreset: (preset: BoundaryPreset) => void;
+}) {
   const { t } = useLocale();
   const updateList = (
     key: keyof CreateScanRequest["scope"],
@@ -319,13 +347,50 @@ function ScopeStep({ request, setRequest }: ScanStepProps) {
       ...current,
       scope: { ...current.scope, [key]: values },
     }));
+    setPreset("custom");
+  };
+  const selectPreset = (nextPreset: BoundaryPreset) => {
+    setPreset(nextPreset);
+    if (nextPreset === "custom") return;
+    setRequest((current) => ({
+      ...current,
+      scope: suggestScope(current.targetType, current.target, nextPreset),
+    }));
   };
   return (
     <section>
       <SectionIntro title={t("newScan.scopeTitle")} description={t("newScan.scopeDescription")} />
+      <fieldset className="mt-5">
+        <legend className="text-xs font-medium text-[var(--text-muted)]">
+          {t("newScan.boundaryPreset")}
+        </legend>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          {(["strict", "standard", "custom"] as BoundaryPreset[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={preset === value}
+              onClick={() => selectPreset(value)}
+              className={`rounded-2xl border p-4 text-left transition active:scale-[0.98] ${
+                preset === value
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                  : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--border-strong)]"
+              }`}
+            >
+              <span className="block text-sm font-semibold text-[var(--text)]">
+                {t(`newScan.boundary.${value}`)}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-[var(--text-muted)]">
+                {t(`newScan.boundary.${value}Hint`)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <Field label={t("newScan.allowedHosts")} hint={t("newScan.commaHint")}>
           <input
+            key={request.scope.allowedHosts.join(",")}
             defaultValue={request.scope.allowedHosts.join(", ")}
             onBlur={(event) => updateList("allowedHosts", event.target.value)}
             className={inputClass}
@@ -333,6 +398,7 @@ function ScopeStep({ request, setRequest }: ScanStepProps) {
         </Field>
         <Field label={t("newScan.allowedPorts")} hint={t("newScan.commaHint")}>
           <input
+            key={request.scope.allowedPorts.join(",")}
             defaultValue={request.scope.allowedPorts.join(", ")}
             onBlur={(event) => updateList("allowedPorts", event.target.value)}
             placeholder="80, 443"
@@ -341,6 +407,7 @@ function ScopeStep({ request, setRequest }: ScanStepProps) {
         </Field>
         <Field label={t("newScan.allowedPaths")} hint={t("newScan.pathsHint")}>
           <input
+            key={request.scope.allowedPaths.join(",")}
             defaultValue={request.scope.allowedPaths.join(", ")}
             onBlur={(event) => updateList("allowedPaths", event.target.value)}
             placeholder="/api, /account"
@@ -349,6 +416,7 @@ function ScopeStep({ request, setRequest }: ScanStepProps) {
         </Field>
         <Field label={t("newScan.exclusions")} hint={t("newScan.commaHint")}>
           <input
+            key={request.scope.exclusions.join(",")}
             defaultValue={request.scope.exclusions.join(", ")}
             onBlur={(event) => updateList("exclusions", event.target.value)}
             placeholder="/logout, production billing"
@@ -621,4 +689,53 @@ function splitList(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function suggestScope(
+  targetType: TargetType,
+  target: string,
+  preset: Exclude<BoundaryPreset, "custom">,
+): CreateScanRequest["scope"] {
+  const strict = preset === "strict";
+  if (targetType === "local") {
+    return {
+      allowedHosts: [],
+      allowedPorts: [],
+      allowedPaths: [],
+      exclusions: strict
+        ? [".env and credential files", ".git metadata"]
+        : [".env and credential files"],
+    };
+  }
+  if (targetType === "network") {
+    const host = target.trim().replace(/\.$/, "").toLowerCase();
+    return {
+      allowedHosts: host ? [host] : [],
+      allowedPorts: strict ? [443] : [80, 443, 8080, 8443],
+      allowedPaths: [],
+      exclusions: strict ? ["state-changing services"] : [],
+    };
+  }
+  try {
+    const parsed = new URL(target);
+    const port = parsed.port
+      ? Number(parsed.port)
+      : parsed.protocol === "http:"
+        ? 80
+        : 443;
+    const path = parsed.pathname || "/";
+    return {
+      allowedHosts: [parsed.hostname.toLowerCase()],
+      allowedPorts: [port],
+      allowedPaths: [strict ? path : "/"],
+      exclusions:
+        targetType === "repository"
+          ? ["secrets and credential files", "generated dependencies"]
+          : strict
+            ? ["logout endpoints", "billing and payment changes", "destructive actions"]
+            : ["logout and destructive actions"],
+    };
+  } catch {
+    return initialRequest.scope;
+  }
 }

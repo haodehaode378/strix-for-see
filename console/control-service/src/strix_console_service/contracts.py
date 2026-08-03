@@ -409,6 +409,20 @@ class ProviderConfigRequest(CamelModel):
     api_key: str | None = Field(default=None, min_length=1, max_length=1200)
 
 
+class ProviderModelsRequest(CamelModel):
+    """Write-only connection details used to discover available model identifiers."""
+
+    provider: ProviderKind
+    api_base: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=1200)
+
+
+class ProviderModelsResponse(CamelModel):
+    """Bounded model identifiers returned by a provider without response metadata."""
+
+    models: list[str] = Field(default_factory=list, max_length=200)
+
+
 class ProviderStatus(CamelModel):
     """Safe provider status returned to the browser."""
 

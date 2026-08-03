@@ -1,4 +1,10 @@
-import { CheckCircle2, KeyRound, LoaderCircle, PlugZap } from "lucide-react";
+import {
+  CheckCircle2,
+  KeyRound,
+  LoaderCircle,
+  PlugZap,
+  Search,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type {
@@ -7,6 +13,7 @@ import type {
 } from "../../features/scan-control/contracts";
 import {
   configureProvider,
+  discoverProviderModels,
   testProvider,
 } from "../../features/scan-control/scanClient";
 import { useProvider } from "../../features/scan-control/useProvider";
@@ -27,6 +34,17 @@ const errorKeys: Record<string, MessageKey> = {
   apiBaseRequired: "provider.error.apiBaseRequired",
   invalidApiBase: "provider.error.invalidApiBase",
   secretStoreFailed: "provider.error.secretStoreFailed",
+  authenticationFailed: "provider.error.authenticationFailed",
+  connectionFailed: "provider.error.connectionFailed",
+  invalidProviderResponse: "provider.error.invalidProviderResponse",
+};
+
+const apiBasePlaceholders: Record<ProviderKind, string> = {
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
+  openaiCompatible: "https://api.example.com/v1",
+  ollama: "http://127.0.0.1:11434/v1",
 };
 
 export function ProviderPanel({
@@ -40,7 +58,8 @@ export function ProviderPanel({
   const [model, setModel] = useState<string | null>(null);
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [busy, setBusy] = useState<"discover" | "save" | "test" | null>(null);
   const [feedback, setFeedback] = useState<MessageKey | null>(null);
 
   useEffect(() => {
@@ -58,10 +77,7 @@ export function ProviderPanel({
       const result = await configureProvider({
         provider: selectedProvider,
         model: selectedModel,
-        apiBase:
-          selectedProvider === "openaiCompatible" || selectedProvider === "ollama"
-            ? selectedApiBase || null
-            : null,
+        apiBase: selectedApiBase || null,
         apiKey: selectedProvider === "ollama" ? null : apiKey || null,
       });
       setApiKey("");
@@ -89,6 +105,31 @@ export function ProviderPanel({
       }
     } catch {
       setFeedback("provider.testFailed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const discover = async () => {
+    setBusy("discover");
+    setFeedback(null);
+    try {
+      const result = await discoverProviderModels({
+        provider: selectedProvider,
+        apiBase: selectedApiBase || null,
+        apiKey: selectedProvider === "ollama" ? null : apiKey || null,
+      });
+      const discovered = result.models.map((value) =>
+        toRuntimeModel(selectedProvider, value),
+      );
+      setModels(discovered);
+      if (!selectedModel && discovered[0]) setModel(discovered[0]);
+      setFeedback(
+        discovered.length > 0 ? "provider.modelsLoaded" : "provider.noModels",
+      );
+    } catch (error) {
+      const code = error instanceof ControlServiceError ? error.code : "";
+      setFeedback(errorKeys[code] ?? "provider.error.modelsFailed");
     } finally {
       setBusy(null);
     }
@@ -130,42 +171,44 @@ export function ProviderPanel({
         ) : null}
       </div>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <Field label={t("provider.kind")}>
-          <select
-            value={selectedProvider}
-            onChange={(event) => setProvider(event.target.value as ProviderKind)}
-            className={inputClass}
-          >
-            {Object.entries(providerLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t("provider.model")}>
+      <fieldset className="mt-5">
+        <legend className="text-xs font-medium text-[var(--text-muted)]">
+          {t("provider.kind")}
+        </legend>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {Object.entries(providerLabels).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => {
+                setProvider(value as ProviderKind);
+                setModel("");
+                setApiBase("");
+                setModels([]);
+                setFeedback(null);
+              }}
+              className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition active:scale-[0.98] ${
+                selectedProvider === value
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                  : "border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--border-strong)]"
+              }`}
+              aria-pressed={selectedProvider === value}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Field label={t("provider.apiBase")} hint={t("provider.apiBaseHint")}>
           <input
-            value={selectedModel}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder={t("provider.modelPlaceholder")}
+            value={selectedApiBase}
+            onChange={(event) => setApiBase(event.target.value)}
+            placeholder={apiBasePlaceholders[selectedProvider]}
             className={inputClass}
           />
         </Field>
-        {selectedProvider === "openaiCompatible" || selectedProvider === "ollama" ? (
-          <Field label={t("provider.apiBase")}>
-            <input
-              value={selectedApiBase}
-              onChange={(event) => setApiBase(event.target.value)}
-              placeholder={
-                selectedProvider === "ollama"
-                  ? "http://127.0.0.1:11434/v1"
-                  : "https://api.example.com/v1"
-              }
-              className={inputClass}
-            />
-          </Field>
-        ) : null}
         {selectedProvider !== "ollama" ? (
           <Field label={t("provider.apiKey")}>
             <input
@@ -174,7 +217,7 @@ export function ProviderPanel({
               onChange={(event) => setApiKey(event.target.value)}
               autoComplete="new-password"
               placeholder={
-                status?.hasApiKey
+                status?.provider === selectedProvider && status.hasApiKey
                   ? t("provider.keyStored")
                   : t("provider.keyPlaceholder")
               }
@@ -182,9 +225,34 @@ export function ProviderPanel({
             />
           </Field>
         ) : null}
+        <Field label={t("provider.model")}>
+          <input
+            value={selectedModel}
+            onChange={(event) => setModel(event.target.value)}
+            placeholder={t("provider.modelPlaceholder")}
+            className={inputClass}
+            list="provider-model-options"
+          />
+          <datalist id="provider-model-options">
+            {models.map((value) => <option key={value} value={value} />)}
+          </datalist>
+        </Field>
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void discover()}
+          disabled={busy !== null}
+          className="inline-flex items-center gap-2 rounded-xl border border-[var(--border-strong)] px-4 py-2.5 text-sm font-semibold text-[var(--text)] transition active:scale-[0.98] disabled:opacity-50"
+        >
+          {busy === "discover" ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : (
+            <Search className="size-4" />
+          )}
+          {t("provider.fetchModels")}
+        </button>
         <button
           type="submit"
           disabled={busy !== null || !selectedModel.trim()}
@@ -212,6 +280,12 @@ export function ProviderPanel({
       </div>
     </form>
   );
+}
+
+function toRuntimeModel(provider: ProviderKind, model: string): string {
+  if (model.includes("/")) return model;
+  const prefix = provider === "openaiCompatible" ? "openai" : provider;
+  return `${prefix}/${model}`;
 }
 
 export const inputClass =

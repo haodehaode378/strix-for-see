@@ -2,6 +2,8 @@ import { controlServiceJson } from "../../shared/api/controlServiceClient";
 import type {
   CreateScanRequest,
   ProviderConfigRequest,
+  ProviderModelsRequest,
+  ProviderModelsResponse,
   ProviderStatus,
   ProviderTestResult,
   Scan,
@@ -70,5 +72,15 @@ export function configureProvider(
 export function testProvider(): Promise<ProviderTestResult> {
   return controlServiceJson<ProviderTestResult>("/api/provider/test", {
     method: "POST",
+  });
+}
+
+export function discoverProviderModels(
+  request: ProviderModelsRequest,
+): Promise<ProviderModelsResponse> {
+  return controlServiceJson<ProviderModelsResponse>("/api/provider/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
   });
 }

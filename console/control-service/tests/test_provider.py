@@ -4,7 +4,7 @@ import json
 import urllib.request
 from pathlib import Path
 
-from strix_console_service.contracts import ProviderConfigRequest
+from strix_console_service.contracts import ProviderConfigRequest, ProviderModelsRequest
 from strix_console_service.provider import ProviderService
 
 
@@ -86,3 +86,47 @@ def test_successful_connectivity_check_marks_configuration_verified(
 
     assert result.ok
     assert service.status().connection_verified
+
+
+def test_model_discovery_uses_custom_anthropic_base_without_persisting_key(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    store = MemoryCredentialStore()
+    service = ProviderService(
+        config_path=tmp_path / "provider.json",
+        credential_store=store,
+    )
+    captured: list[urllib.request.Request] = []
+
+    class ModelsResponse:
+        status = 200
+
+        def __enter__(self) -> ModelsResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            return b'{"data":[{"id":"claude-sonnet-4"},{"id":"claude-haiku-3"}]}'
+
+    def open_request(request: urllib.request.Request, **_kwargs: object) -> ModelsResponse:
+        captured.append(request)
+        return ModelsResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_request)
+
+    result = service.discover_models(
+        ProviderModelsRequest(
+            provider="anthropic",
+            api_base="https://gateway.example.com/v1",
+            api_key="write-only-key",
+        )
+    )
+
+    assert result.models == ["claude-haiku-3", "claude-sonnet-4"]
+    assert captured[0].full_url == "https://gateway.example.com/v1/models?limit=200"
+    assert captured[0].headers["X-api-key"] == "write-only-key"
+    assert store.values == {}
+    assert not (tmp_path / "provider.json").exists()

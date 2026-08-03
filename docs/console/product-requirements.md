@@ -65,10 +65,12 @@ Each scan has one primary target. The first release supports a Web URL, local so
 public Git repository, or IP/domain. Related API URLs, subdomains, credentials, and context may be
 attached to that target. Private Git authentication is deferred.
 
-1. Choose the target type and enter the primary target.
-2. Set allowed domains, IPs, ports, and paths plus explicit exclusions.
-3. Choose safe mode or full mode, request rate, timeout, budget, and instructions.
-4. Choose a configured model and optional authentication material.
+1. Configure an OpenAI, Anthropic, Gemini, OpenAI-compatible, or Ollama endpoint; fetch its model
+   list or enter a model identifier manually, then verify connectivity.
+2. Choose the target type and enter the primary target.
+3. Choose a strict, standard, or custom authorization boundary. Suggestions are derived locally
+   from the target and never probe it before authorization.
+4. Choose safe mode or full mode, request rate, timeout, budget, and instructions.
 5. Validate the target, environment, model connectivity, scope, and credentials.
 6. Review the plan and acknowledge authorization before launch.
 
@@ -77,9 +79,11 @@ second confirmation plus a persistent risk indicator. Authentication may include
 Cookie, Bearer token, custom headers, login steps, and client certificates. Secrets are never
 written into run files or displayed in full; “use once” secrets are removed after the task.
 
-Providers include OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints, and Ollama. Users can
-test connectivity and select a configured model per scan. Existing environment configuration may
-be detected for import without revealing the full secret.
+Providers include OpenAI, Anthropic, Gemini, OpenAI-compatible endpoints, and Ollama. Official and
+compatible services accept a custom API base URL. Users can fetch a bounded model list, test
+connectivity, and select a configured model per scan. API keys are write-only browser inputs and
+model-discovery responses never include credentials. Existing environment configuration may be
+detected for import without revealing the full secret.
 
 ## Execution and Live Workspace
 

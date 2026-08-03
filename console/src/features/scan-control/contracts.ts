@@ -84,6 +84,16 @@ export interface ProviderConfigRequest {
   apiKey: string | null;
 }
 
+export interface ProviderModelsRequest {
+  provider: ProviderKind;
+  apiBase: string | null;
+  apiKey: string | null;
+}
+
+export interface ProviderModelsResponse {
+  models: string[];
+}
+
 export interface ProviderTestResult {
   ok: boolean;
   issue: string | null;

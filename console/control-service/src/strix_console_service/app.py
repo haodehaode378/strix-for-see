@@ -26,6 +26,8 @@ from strix_console_service.contracts import (
     LocalRunsResponse,
     LocalRunSummary,
     ProviderConfigRequest,
+    ProviderModelsRequest,
+    ProviderModelsResponse,
     ProviderStatus,
     ProviderTestResult,
     SandboxPullRequest,
@@ -387,6 +389,20 @@ def create_app(
     )
     def test_provider() -> ProviderTestResult:
         return services.provider_service.test_connectivity()
+
+    @app.post(
+        "/api/provider/models",
+        response_model=ProviderModelsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def discover_provider_models(request: ProviderModelsRequest) -> ProviderModelsResponse:
+        try:
+            return services.provider_service.discover_models(request)
+        except ProviderConfigurationError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error.code,
+            ) from error
 
     @app.post(
         "/api/scans",

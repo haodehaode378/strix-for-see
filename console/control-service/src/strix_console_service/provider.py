@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 from strix_console_service.contracts import (
     ProviderConfigRequest,
     ProviderKind,
+    ProviderModelsRequest,
+    ProviderModelsResponse,
     ProviderStatus,
     ProviderTestResult,
 )
@@ -232,6 +234,32 @@ class ProviderService:
         except (OSError, urllib.error.URLError, TimeoutError):
             return ProviderTestResult(ok=False, issue="connectionFailed")
 
+    def discover_models(self, request: ProviderModelsRequest) -> ProviderModelsResponse:
+        """Fetch a bounded model list using write-only or previously stored credentials."""
+
+        api_base = _validate_api_base(request.provider, request.api_base)
+        api_key = request.api_key or self._read_key(request.provider)
+        if request.provider != "ollama" and not api_key:
+            raise ProviderConfigurationError("apiKeyRequired")
+        runtime = ProviderRuntime(
+            provider=request.provider,
+            model="",
+            api_base=api_base,
+            api_key=api_key,
+        )
+        provider_request = _connectivity_request(runtime, model_limit=200)
+        try:
+            with urllib.request.urlopen(provider_request, timeout=8) as response:  # noqa: S310
+                payload = json.loads(response.read(1_048_577))
+        except urllib.error.HTTPError as error:
+            code = "authenticationFailed" if error.code in {401, 403} else "providerRejected"
+            raise ProviderConfigurationError(code) from error
+        except (OSError, urllib.error.URLError, TimeoutError) as error:
+            raise ProviderConfigurationError("connectionFailed") from error
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ProviderConfigurationError("invalidProviderResponse") from error
+        return ProviderModelsResponse(models=_extract_model_ids(request.provider, payload))
+
     def _read_metadata(self) -> _ProviderMetadata | None:
         if not self.config_path.is_file():
             return None
@@ -319,14 +347,20 @@ def _validate_api_base(provider: ProviderKind, value: str | None) -> str | None:
     return normalized
 
 
-def _connectivity_request(runtime: ProviderRuntime) -> urllib.request.Request:
+def _connectivity_request(
+    runtime: ProviderRuntime,
+    *,
+    model_limit: int = 1,
+) -> urllib.request.Request:
     headers = {"Accept": "application/json"}
     if runtime.provider == "anthropic":
-        endpoint = "https://api.anthropic.com/v1/models?limit=1"
+        default_base = "https://api.anthropic.com/v1"
+        endpoint = f"{runtime.api_base or default_base}/models?limit={model_limit}"
         headers["x-api-key"] = runtime.api_key or ""
         headers["anthropic-version"] = "2023-06-01"
     elif runtime.provider == "gemini":
-        endpoint = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
+        default_base = "https://generativelanguage.googleapis.com/v1beta"
+        endpoint = f"{runtime.api_base or default_base}/models?pageSize={model_limit}"
         headers["x-goog-api-key"] = runtime.api_key or ""
     else:
         default_base = "https://api.openai.com/v1"
@@ -334,3 +368,24 @@ def _connectivity_request(runtime: ProviderRuntime) -> urllib.request.Request:
         if runtime.api_key:
             headers["Authorization"] = f"Bearer {runtime.api_key}"
     return urllib.request.Request(endpoint, headers=headers, method="GET")  # noqa: S310
+
+
+def _extract_model_ids(provider: ProviderKind, payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        raise ProviderConfigurationError("invalidProviderResponse")
+    collection = payload.get("models" if provider == "gemini" else "data")
+    if not isinstance(collection, list):
+        raise ProviderConfigurationError("invalidProviderResponse")
+    models: list[str] = []
+    for item in collection:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("name" if provider == "gemini" else "id")
+        if not isinstance(value, str):
+            continue
+        model_id = value.removeprefix("models/").strip()
+        if model_id and len(model_id) <= 200 and model_id not in models:
+            models.append(model_id)
+        if len(models) == 200:
+            break
+    return sorted(models, key=str.casefold)

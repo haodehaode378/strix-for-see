@@ -14,13 +14,27 @@ vi.mock("../features/system-readiness/useSystemReadiness", () => ({
   }),
 }));
 
+vi.mock("../features/scan-control/useProvider", () => {
+  const status = {
+      configured: true,
+      provider: "openai",
+      model: "openai/gpt-5",
+      apiBase: null,
+      hasApiKey: true,
+      connectionVerified: true,
+  } as const;
+  return {
+    useProvider: () => ({ state: "ready", status, setStatus: vi.fn() }),
+  };
+});
+
 describe("NewScanPage", () => {
   beforeEach(() => {
     window.localStorage.setItem("strix-console.locale", "en-US");
     window.history.replaceState({}, "", "/scans/new");
   });
 
-  it("requires one primary target before advancing", () => {
+  it("configures the model first and derives a strict boundary locally", () => {
     render(
       <LocaleProvider>
         <NavigationProvider>
@@ -30,6 +44,13 @@ describe("NewScanPage", () => {
     );
 
     const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(screen.getByRole("button", { name: "OpenAI" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(continueButton).toBeEnabled();
+    fireEvent.click(continueButton);
+
     expect(continueButton).toBeDisabled();
     expect(screen.getByRole("button", { name: /Web application/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Local directory/ })).toBeInTheDocument();
@@ -39,5 +60,15 @@ describe("NewScanPage", () => {
     });
 
     expect(continueButton).toBeEnabled();
+    fireEvent.click(continueButton);
+
+    expect(screen.getByRole("button", { name: /Strict boundary/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText(/Additional allowed hosts/)).toHaveValue(
+      "example.com",
+    );
+    expect(screen.getByLabelText(/Allowed ports/)).toHaveValue("443");
   });
 });
