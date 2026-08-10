@@ -1,12 +1,27 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "../shared/i18n/LocaleProvider";
 import { SettingsPage } from "./SettingsPage";
 
+afterEach(cleanup);
+
 vi.mock("../features/updates/desktopUpdater", () => ({
   isDesktopRuntime: () => false,
   installDesktopUpdate: vi.fn(),
+}));
+vi.mock("../features/scan-control/scanClient", () => ({
+  getProvider: async () => ({
+    configured: false,
+    provider: null,
+    model: null,
+    apiBase: null,
+    hasApiKey: false,
+    connectionVerified: false,
+  }),
+  configureProvider: vi.fn(),
+  discoverProviderModels: vi.fn(),
+  testProvider: vi.fn(),
 }));
 vi.mock("../features/updates/updatesClient", () => ({
   checkApplicationUpdate: async () => ({
@@ -32,6 +47,18 @@ vi.mock("../features/updates/updatesClient", () => ({
 }));
 
 describe("SettingsPage", () => {
+  it("exposes model provider credentials in settings", async () => {
+    render(
+      <LocaleProvider>
+        <SettingsPage />
+      </LocaleProvider>,
+    );
+
+    expect(await screen.findByLabelText(/API base URL/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Model identifier/i)).toBeInTheDocument();
+  });
+
   it("shows real application and compatible Sandbox release metadata", async () => {
     render(
       <LocaleProvider>

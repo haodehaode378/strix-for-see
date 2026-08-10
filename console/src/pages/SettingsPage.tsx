@@ -1,6 +1,7 @@
 import { Download, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
+import { ProviderPanel } from "../components/scan/ProviderPanel";
 import { PageHeader } from "../components/ui/PageHeader";
 import type {
   ApplicationUpdate,
@@ -105,6 +106,8 @@ export function SettingsPage() {
           </button>
         }
       />
+
+      <ProviderPanel onStatus={ignoreProviderStatus} />
 
       <div className="grid gap-5 xl:grid-cols-2">
         <UpdateCard
@@ -225,6 +228,8 @@ export function SettingsPage() {
     </section>
   );
 }
+
+function ignoreProviderStatus() {}
 
 function UpdateCard({
   icon: Icon,
