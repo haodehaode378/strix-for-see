@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
+from agents.items import ItemHelpers
 from agents.memory import SQLiteSession
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from agents.items import TResponseInputItem
@@ -21,9 +24,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _PooledConnectionSession(SQLiteSession):
+    @contextmanager
+    def _locked_connection(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("SQLiteSession is closed")
+            if self._is_memory_db:
+                yield self._shared_connection
+                return
+            connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            try:
+                yield connection
+            finally:
+                connection.close()
+
+
 def open_agent_session(agent_id: str, path: Path) -> SQLiteSession:
     path.parent.mkdir(parents=True, exist_ok=True)
-    return SQLiteSession(session_id=agent_id, db_path=path)
+    return _PooledConnectionSession(session_id=agent_id, db_path=path)
+
+
+async def seed_initial_input(session: Session, initial_input: Any) -> bool:
+    """Commit an agent's opening identity/task input before its first run cycle."""
+    items = ItemHelpers.input_to_new_input_list(initial_input)
+    if not items:
+        return False
+    async with session_write_lock(session):
+        if await session.get_items():
+            return False
+        await session.add_items(items)
+    return True
 
 
 _IMAGE_REJECTED_TEXT = "[image rejected by the model]"
@@ -88,6 +119,39 @@ async def _rewrite_session(
             logger.exception("session rewrite failed; restoring original items")
             await session.clear_session()
             await session.add_items(original_items)
+            raise
+        return True
+
+
+async def replace_session_items(
+    session: Session,
+    new_items: list[Any],
+    *,
+    expected_len: int | None = None,
+) -> bool:
+    """Overwrite the session's items, restoring the originals on failure.
+
+    When ``expected_len`` is given, the rewrite is skipped if the session no
+    longer has that many items (a concurrent writer changed it), so a slow
+    compaction summary can't clobber newer turns.
+    """
+    async with session_write_lock(session):
+        original = list(await session.get_items())
+        if expected_len is not None and len(original) != expected_len:
+            logger.warning(
+                "skipping session rewrite: expected %d items, found %d",
+                expected_len,
+                len(original),
+            )
+            return False
+        rebuilt = cast("list[TResponseInputItem]", new_items)
+        await session.clear_session()
+        try:
+            await session.add_items(rebuilt)
+        except Exception:
+            logger.exception("session rewrite failed; restoring original items")
+            await session.clear_session()
+            await session.add_items(original)
             raise
         return True
 

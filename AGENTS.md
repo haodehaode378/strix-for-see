@@ -1,41 +1,58 @@
-# Repository Guidelines
+# Strix — Agent Guide
 
-## Project Structure
+Strix is an open-source autonomous AI pentesting tool. This file is for AI coding agents that want to **use** Strix (run security scans) or **contribute** to it.
 
-Python source lives in `strix/`, with orchestration, agents, runtimes, tools, reporting,
-configuration, and CLI code grouped by subpackage. Tests live in `tests/`, documentation in
-`docs/`, container assets in `containers/`, and helpers in `scripts/`. The existing viewer is under
-`strix/viewer/frontend/`, with its generated bundle in `strix/viewer/static/`.
+## Using Strix from an agent
 
-The new Strix Console lives in `console/` as an independent React/Tauri app with a Python control
-service. Do not import or extend the existing viewer UI; consult it only for behavior, event
-formats, and run-file parsing. Console requirements, architecture, and phases are in
-`docs/console/`.
+Install the agent skills for step-by-step workflows:
 
-## Development Commands
+```bash
+npx skills add usestrix/strix
+```
 
-- `make setup-dev`: install Python dependencies with `uv` and configure pre-commit.
-- `uv run strix --target https://example.com`: run Strix from the working tree.
-- `uv run pytest`: run all Python tests; append a test path for focused execution.
-- `make check-all`: format, lint, type-check, and run security checks.
-- `make pre-commit`: run all configured hooks.
-- `make viewer`: rebuild the existing viewer and committed static bundle.
+- `penetration-testing-with-strix` — run a headless pentest against code, URLs, domains, or IPs and read results (covers both run modes below)
+- `managed-pentesting-with-strix` — drive the managed app.strix.ai platform via REST (no local Docker/LLM needed)
+- `fix-security-vulnerabilities-with-strix` — remediate findings and re-run Strix to verify
+- `ci-security-scanning-with-strix` — add PR scanning to CI/CD (self-hosted CLI or managed app)
 
-## Style and Testing
+**Two ways to run, same engine — pick per situation:**
 
-Use four-space Python indentation, type hints, and docstrings for public APIs. Ruff enforces double
-quotes and a 100-character line limit. Name modules and functions in `snake_case`, classes in
-`PascalCase`, and tests `test_<behavior>`. Add focused regression tests for behavior changes.
+- **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.
+  ```bash
+  curl -sSL https://strix.ai/install | bash        # install
+  export STRIX_LLM="openai/gpt-5.4"                 # any LiteLLM model id
+  export LLM_API_KEY="<key>"
+  strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
+  ```
+  - Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.
+  - Exit codes (headless): `0` clean, `1` fatal error, `2` vulnerabilities found. A `0` only covers what was analyzed — check `run.json` (`status`, `llm_usage.cost` vs the budget) before calling a run clean.
+  - Artifacts in `strix_runs/<run-name>/`: `penetration_test_report.md`, `vulnerabilities/*.md`, `vulnerabilities.json`, `findings.sarif` (SARIF 2.1.0), `run.json`.
 
-## Commits and Reviews
+- **Managed cloud (app.strix.ai):** no Docker, no LLM key, no local install; adds team dashboards, scheduling, PR reviews, and downloadable PDF/DOCX reports (Enterprise plan). Best in sandboxed/CI environments and for teams. Use it when local infra isn't available.
+  ```bash
+  # token from Settings → API Access; register the target as an asset, then:
+  curl -sS https://app.strix.ai/api/v1/scans -H "Authorization: Bearer $STRIX_API_TOKEN" \
+    -H "Content-Type: application/json" -d '{"engagement_type":"live_test","domain_ids":["<uuid>"]}'
+  ```
+  - API docs: https://docs.app.strix.ai (OpenAPI: https://docs.app.strix.ai/openapi.json).
 
-Work directly on `main` unless the user requests isolation or collaboration requires a branch.
-Write commits as `<type>: <中文简述>` with a lowercase `feat`, `fix`, `refactor`, `docs`, `test`,
-`chore`, or `style`. Keep the summary under 50 Chinese characters and each commit to one logical
-change. Run relevant checks before pushing. If a PR is requested, explain motivation, link issues,
-include evidence, and add screenshots for UI changes.
+- CLI docs index for LLMs: https://docs.strix.ai/llms.txt (full: https://docs.strix.ai/llms-full.txt).
+- Only scan targets the user is authorized to test.
 
-## Console and Security Rules
+## Contributing to this repo
+
+- Python 3.12+, managed with `uv`. Install dev deps: `make dev-install`.
+- Lint/format/type-check/security, all in one: `make check-all` (ruff, mypy, bandit).
+- Tests: `uv run pytest`.
+- Run from source: `uv run strix --target <target>`.
+- Layout: `strix/agents` (agent graph + prompts), `strix/tools` (proxy, browser, terminal, scanners), `strix/runtime` (Docker sandbox), `strix/report` (findings, SARIF), `strix/skills` (internal knowledge packs the pentest agents load — different from the consumer skills in `skills/`), `strix/interface` (CLI/TUI), `containers/` (sandbox image).
+- Pre-commit hooks: `make pre-commit` (or `uv run pre-commit install`).
+
+## Local Strix Console addendum
+
+The Strix Console lives in `console/` as an independent React/Tauri app with a Python control
+service. Do not import or extend the viewer UI; consult it only for behavior, event formats, and
+run-file parsing. Console requirements, architecture, and phases are in `docs/console/`.
 
 - Target Windows with one React UI for Tauri and a local browser.
 - Support Simplified Chinese and English; never hard-code user-facing text.
@@ -47,7 +64,3 @@ include evidence, and add screenshots for UI changes.
 - Use HTTP for commands, resumable SSE for events, and POST for steering.
 - Do not claim pause/resume without real state restoration.
 - Never commit credentials, unauthorized target data, or `.ua/` artifacts.
-
-See [product requirements](docs/console/product-requirements.md),
-[technical architecture](docs/console/architecture.md), and
-[delivery roadmap](docs/console/roadmap.md).
