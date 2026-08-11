@@ -289,13 +289,16 @@ jobs:
 
           try {
             $appProcess = Start-Process -FilePath $app.FullName -PassThru
-            Start-Sleep -Seconds 10
-            if ($appProcess.HasExited) {
-              throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
+            $listener = $null
+            for ($attempt = 0; $attempt -lt 30 -and -not $listener; $attempt++) {
+              Start-Sleep -Seconds 1
+              if ($appProcess.HasExited) {
+                throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
+              }
+              $listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" `
+                -LocalPort 43110 -State Listen -ErrorAction SilentlyContinue |
+                Select-Object -First 1
             }
-            $listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" `
-              -LocalPort 43110 -State Listen -ErrorAction SilentlyContinue |
-              Select-Object -First 1
             if (-not $listener) {
               throw "Bundled control service did not start"
             }
