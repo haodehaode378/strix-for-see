@@ -34,7 +34,7 @@ def test_health_requires_access_token() -> None:
     assert authorized.status_code == 200
     assert authorized.json() == {
         "status": "ok",
-        "serviceVersion": "0.1.6",
+        "serviceVersion": "0.1.7",
         "schemaVersion": 1,
         "platform": "windows",
     }
