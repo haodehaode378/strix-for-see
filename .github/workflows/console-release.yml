@@ -269,11 +269,15 @@ jobs:
             if ($appProcess.HasExited) {
               throw "Strix Console exited during startup with code $($appProcess.ExitCode)"
             }
-            $serviceProcess = Get-CimInstance Win32_Process |
-              Where-Object ExecutablePath -eq $service.FullName |
+            $listener = Get-NetTCPConnection -LocalAddress "127.0.0.1" `
+              -LocalPort 43110 -State Listen -ErrorAction SilentlyContinue |
               Select-Object -First 1
-            if (-not $serviceProcess) {
+            if (-not $listener) {
               throw "Bundled control service did not start"
+            }
+            $serviceProcess = Get-Process -Id $listener.OwningProcess -ErrorAction Stop
+            if ($serviceProcess.ProcessName -ne "strix-console-service") {
+              throw "Unexpected process owns the control-service port"
             }
           } finally {
             Get-Process -Name "strix-console", "Strix Console", "strix-console-service" `
