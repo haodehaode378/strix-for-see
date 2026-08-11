@@ -28,6 +28,12 @@ jobs:
           version="$(tr -d '[:space:]' < containers/SANDBOX_VERSION)"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
             { echo "Invalid Sandbox version: $version"; exit 1; }
+          grep -Fq "_SANDBOX_VERSION = \"$version\"" \
+            console/control-service/src/strix_console_service/updates.py ||
+            { echo "Sandbox version does not match the update service"; exit 1; }
+          grep -Fq "strix-sandbox:$version" \
+            console/control-service/src/strix_console_service/system_checks.py ||
+            { echo "Sandbox version does not match environment checks"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/strix-for-see-sandbox" >> "$GITHUB_OUTPUT"
 
@@ -65,19 +71,21 @@ jobs:
         run: |
           docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > sandbox-image.json
           size_bytes="$(jq '[.layers[].size] | add' sandbox-image.json)"
+          app_version="$(jq -r '.version' console/src-tauri/tauri.conf.json)"
           test "$size_bytes" -gt 0
           jq -n \
             --arg version "$VERSION" \
             --arg image "$IMAGE:$VERSION" \
             --arg digest "$DIGEST" \
+            --arg appVersion "$app_version" \
             --argjson sizeBytes "$size_bytes" \
             '{
               version: $version,
               image: $image,
               digest: $digest,
               sizeBytes: $sizeBytes,
-              minimumAppVersion: "0.1.0",
-              maximumAppVersion: "0.1.0"
+              minimumAppVersion: $appVersion,
+              maximumAppVersion: $appVersion
             }' > sandbox.json
 
       - name: Create offline Sandbox package
