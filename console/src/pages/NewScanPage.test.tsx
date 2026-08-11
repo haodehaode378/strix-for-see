@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LocaleProvider } from "../shared/i18n/LocaleProvider";
 import { NavigationProvider } from "../shared/navigation/NavigationProvider";
@@ -29,6 +29,8 @@ vi.mock("../features/scan-control/useProvider", () => {
 });
 
 describe("NewScanPage", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     window.localStorage.setItem("strix-console.locale", "en-US");
     window.history.replaceState({}, "", "/scans/new");
@@ -70,5 +72,38 @@ describe("NewScanPage", () => {
       "example.com",
     );
     expect(screen.getByLabelText(/Allowed ports/)).toHaveValue("443");
+  });
+
+  it("lets the operator choose Strix completion rules", () => {
+    render(
+      <LocaleProvider>
+        <NavigationProvider>
+          <NewScanPage />
+        </NavigationProvider>
+      </LocaleProvider>,
+    );
+
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    fireEvent.click(continueButton);
+    fireEvent.change(screen.getByLabelText("Primary target"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(continueButton);
+    fireEvent.click(continueButton);
+
+    const consoleLimits = screen.getByRole("button", {
+      name: /Console safety limits/,
+    });
+    const strixRules = screen.getByRole("button", { name: /Follow Strix rules/ });
+    expect(consoleLimits).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Maximum duration (minutes)")).toBeInTheDocument();
+
+    fireEvent.click(strixRules);
+
+    expect(strixRules).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("Maximum duration (minutes)")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/no Console duration or budget protection/),
+    ).toBeInTheDocument();
   });
 });

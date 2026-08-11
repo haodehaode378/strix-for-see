@@ -2,7 +2,9 @@ import {
   CheckCircle2,
   CircleAlert,
   Clipboard,
+  LoaderCircle,
   RefreshCw,
+  Wrench,
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
@@ -11,9 +13,20 @@ import { PageHeader } from "../components/ui/PageHeader";
 import type {
   CheckStatus,
   SystemCheck,
+  SystemReport,
 } from "../features/system-readiness/contracts";
-import { getDiagnostics } from "../features/system-readiness/systemClient";
+import {
+  getDiagnostics,
+  prepareSystem,
+  recheckSystem,
+} from "../features/system-readiness/systemClient";
 import { useSystemReadiness } from "../features/system-readiness/useSystemReadiness";
+import type { SandboxPullStatus } from "../features/updates/contracts";
+import {
+  checkSandboxUpdate,
+  getSandboxPullStatus,
+  startSandboxPull,
+} from "../features/updates/updatesClient";
 import type { MessageKey } from "../shared/i18n/messages";
 import { useLocale } from "../shared/i18n/useLocale";
 
@@ -54,10 +67,25 @@ const statusLabels: Record<CheckStatus, MessageKey> = {
   error: "environment.status.error",
 };
 
+type PreparationState =
+  | "idle"
+  | "startingDocker"
+  | "checkingSandbox"
+  | "downloadingSandbox"
+  | "verifyingSandbox"
+  | "completed"
+  | "failed";
+
+const activePullStates = new Set(["downloading", "verifying"]);
+
 export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
   const { t } = useLocale();
   const { state, report, retry, recheck } = useSystemReadiness();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [preparationState, setPreparationState] = useState<PreparationState>("idle");
+  const [pull, setPull] = useState<SandboxPullStatus | null>(null);
+
+  const isPreparing = !["idle", "completed", "failed"].includes(preparationState);
 
   const copyDiagnostics = async () => {
     try {
@@ -66,6 +94,46 @@ export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
       setCopyState("copied");
     } catch {
       setCopyState("failed");
+    }
+  };
+
+  const prepareEnvironment = async () => {
+    setPreparationState("startingDocker");
+    setPull(null);
+    try {
+      let prepared = await prepareSystem();
+      prepared = await waitForDocker(prepared);
+      const dockerReady = prepared.checks.some(
+        (check) => check.id === "dockerDaemon" && check.status === "ready",
+      );
+      if (!dockerReady) {
+        setPreparationState("failed");
+        await recheck();
+        return;
+      }
+
+      setPreparationState("checkingSandbox");
+      const sandbox = await checkSandboxUpdate();
+      if (sandbox.available) {
+        let pullStatus = await startSandboxPull();
+        setPull(pullStatus);
+        while (activePullStates.has(pullStatus.state)) {
+          setPreparationState(
+            pullStatus.state === "verifying" ? "verifyingSandbox" : "downloadingSandbox",
+          );
+          await delay(1000);
+          pullStatus = await getSandboxPullStatus();
+          setPull(pullStatus);
+        }
+        if (pullStatus.state !== "completed") {
+          throw new Error(pullStatus.errorCode ?? "sandboxPullFailed");
+        }
+      }
+      setPreparationState("completed");
+      await recheck();
+    } catch {
+      setPreparationState("failed");
+      await recheck();
     }
   };
 
@@ -79,6 +147,19 @@ export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              onClick={() => void prepareEnvironment()}
+              disabled={isPreparing}
+              className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
+            >
+              {isPreparing ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Wrench className="size-4" aria-hidden="true" />
+              )}
+              {t(isPreparing ? "environment.preparing" : "environment.prepare")}
+            </button>
+            <button
+              type="button"
               onClick={() => void copyDiagnostics()}
               className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm font-semibold text-[var(--text-muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--text)]"
             >
@@ -89,7 +170,7 @@ export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
               type="button"
               onClick={() => void recheck()}
               disabled={state === "loading"}
-              className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-sm font-semibold text-[var(--text-muted)] transition hover:border-[var(--border-strong)] hover:text-[var(--text)] active:scale-[0.98] disabled:cursor-wait disabled:opacity-60"
             >
               <RefreshCw
                 className={`size-4 ${state === "loading" ? "animate-spin" : ""}`}
@@ -107,6 +188,8 @@ export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
             ? t("environment.diagnosticsFailed")
             : ""}
       </p>
+
+      <PreparationPanel state={preparationState} pull={pull} />
 
       {state === "loading" && !report ? <LoadingPanel /> : null}
       {state === "error" && !report ? (
@@ -159,6 +242,60 @@ export function EnvironmentPage({ setup = false }: { setup?: boolean }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function PreparationPanel({
+  state,
+  pull,
+}: {
+  state: PreparationState;
+  pull: SandboxPullStatus | null;
+}) {
+  const { t } = useLocale();
+  const active = !["idle", "completed", "failed"].includes(state);
+  const progress =
+    pull && pull.totalBytes > 0
+      ? Math.min(100, Math.round((pull.downloadedBytes / pull.totalBytes) * 100))
+      : 0;
+
+  return (
+    <section
+      className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5"
+      aria-live="polite"
+      aria-busy={active}
+    >
+      <div className="flex items-start gap-3">
+        {active ? (
+          <LoaderCircle className="mt-0.5 size-5 shrink-0 animate-spin text-[var(--accent)]" />
+        ) : state === "failed" ? (
+          <CircleAlert className="mt-0.5 size-5 shrink-0 text-[var(--danger)]" />
+        ) : (
+          <Wrench className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-[var(--text)]">
+            {t(`environment.prepareState.${state}`)}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+            {t("environment.prepareHint")}
+          </p>
+          {state === "downloadingSandbox" || state === "verifyingSandbox" ? (
+            <div className="mt-3">
+              <progress
+                className="h-2 w-full accent-[var(--accent)]"
+                max={100}
+                value={progress}
+              />
+              <p className="mt-1 text-xs font-medium text-[var(--warning)]">
+                {t("environment.dockerPullSlow")}
+                {pull?.totalBytes ? ` ${progress}%` : ""}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -258,4 +395,21 @@ function ErrorPanel({
       </button>
     </div>
   );
+}
+
+async function waitForDocker(initial: SystemReport): Promise<SystemReport> {
+  let report = initial;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const docker = report.checks.find((check) => check.id === "dockerDaemon");
+    if (docker?.status === "ready" || docker?.issue === "dockerCliMissing") {
+      return report;
+    }
+    await delay(1000);
+    report = await recheckSystem();
+  }
+  return report;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

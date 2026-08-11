@@ -19,7 +19,7 @@ from strix_console_service.contracts import (
 )
 
 _MINIMUM_FREE_BYTES = 5 * 1024**3
-_DEFAULT_SANDBOX_IMAGE = "ghcr.io/haodehaode378/strix-for-see-sandbox:latest"
+_DEFAULT_SANDBOX_IMAGE = "ghcr.io/usestrix/strix-sandbox:1.3.0"
 _VERSION_PATTERN = re.compile(r"\d+(?:\.\d+){1,3}")
 
 
@@ -97,6 +97,14 @@ class SystemInspector:
         )
         return SystemReport(generated_at=datetime.now(UTC), summary=summary, checks=checks)
 
+    def prepare(self) -> SystemReport:
+        """Start Docker Desktop when available, then return a fresh readiness report."""
+
+        docker_path = self.which("docker")
+        if docker_path is not None and self._docker_daemon_check(docker_path).status != "ready":
+            self.command_runner([docker_path, "desktop", "start"])
+        return self.inspect()
+
     def diagnostics(self) -> DiagnosticReport:
         report = DiagnosticReport(system=self.inspect())
         raw = report.model_dump_json(by_alias=True)
@@ -165,11 +173,13 @@ class SystemInspector:
         configured_path = self.environment.get("STRIX_CONSOLE_STRIX_PATH")
         candidate = configured_path or self.which("strix")
         if candidate and Path(candidate).exists():
+            result = self.command_runner([candidate, "--version"])
+            version = _safe_version(result.stdout) if result.return_code == 0 else None
             return SystemCheck(
                 id="strix",
                 status="ready",
                 requirement="required",
-                value="configured",
+                value=version or "configured",
             )
         return SystemCheck(
             id="strix",
@@ -262,8 +272,8 @@ class SystemInspector:
         if docker_path is None:
             return SystemCheck(
                 id="sandbox",
-                status="warning",
-                requirement="optional",
+                status="missing",
+                requirement="required",
                 value=image,
                 issue="dockerUnavailable",
             )
@@ -273,7 +283,7 @@ class SystemInspector:
         return SystemCheck(
             id="sandbox",
             status="ready" if result.return_code == 0 else "warning",
-            requirement="optional",
+            requirement="required",
             value=image,
             issue=None if result.return_code == 0 else "imageMissing",
         )
@@ -295,7 +305,7 @@ class SystemInspector:
         return SystemCheck(
             id="provider",
             status="ready" if configured else "warning",
-            requirement="optional",
+            requirement="required",
             value="configured" if configured else None,
             issue=None if configured else "notConfigured",
         )

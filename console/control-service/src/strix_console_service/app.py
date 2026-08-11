@@ -126,6 +126,7 @@ def _build_services(
         process_adapter=StrixProcessAdapter(
             run_root=run_indexer.default_root,
             strix_path=os.environ.get("STRIX_CONSOLE_STRIX_PATH"),
+            python_path=os.environ.get("STRIX_CONSOLE_PYTHON_PATH"),
         ),
         readiness=lambda: inspector.inspect().summary.ready,
         event_store=event_store,
@@ -278,6 +279,16 @@ def create_app(
     )
     def recheck_system() -> SystemReport:
         return services.system_inspector.inspect()
+
+    @app.post(
+        "/api/system/prepare",
+        response_model=SystemReport,
+        dependencies=[Depends(require_access_token)],
+    )
+    def prepare_system() -> SystemReport:
+        result = services.system_inspector.prepare()
+        services.audit_log.append("system.prepare", "completed")
+        return result
 
     @app.get(
         "/api/system/diagnostics",

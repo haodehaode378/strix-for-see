@@ -104,13 +104,21 @@ export function ScanDetailPage({ id }: { id: string }) {
               value={String(scan.options.requestRatePerMinute)}
             />
             <Detail
-              label={t("newScan.duration")}
-              value={`${scan.options.maxDurationMinutes} ${t("common.minutes")}`}
+              label={t("newScan.terminationPolicy")}
+              value={t(`newScan.termination.${scan.options.terminationPolicy}`)}
             />
-            <Detail
-              label={t("newScan.budget")}
-              value={`$${scan.options.maxBudgetUsd.toFixed(2)}`}
-            />
+            {scan.options.terminationPolicy === "consoleLimits" ? (
+              <>
+                <Detail
+                  label={t("newScan.duration")}
+                  value={`${scan.options.maxDurationMinutes} ${t("common.minutes")}`}
+                />
+                <Detail
+                  label={t("newScan.budget")}
+                  value={`$${scan.options.maxBudgetUsd.toFixed(2)}`}
+                />
+              </>
+            ) : null}
           </dl>
         </section>
 

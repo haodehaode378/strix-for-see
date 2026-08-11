@@ -98,10 +98,12 @@ class StrixProcessAdapter:
         *,
         run_root: Path,
         strix_path: str | None,
+        python_path: str | None = None,
         environment: Mapping[str, str] | None = None,
     ) -> None:
         self.run_root = run_root.resolve()
         self.strix_path = strix_path
+        self.python_path = python_path
         self.base_environment = dict(environment if environment is not None else os.environ)
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
         self._lock = threading.Lock()
@@ -116,35 +118,51 @@ class StrixProcessAdapter:
     ) -> int:
         command, child_environment = self._build_command(record, provider)
         self.run_root.mkdir(parents=True, exist_ok=True)
+        log_path = self.run_root.parent / "state" / "process-logs" / f"{record.id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = log_path.open("wb")
         creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        process = subprocess.Popen(  # noqa: S603
-            command,
-            cwd=self.run_root.parent,
-            env=child_environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            shell=False,
-            close_fds=True,
-            creationflags=creation_flags,
-        )
+        try:
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                cwd=self.run_root.parent,
+                env=child_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                shell=False,
+                close_fds=True,
+                creationflags=creation_flags,
+            )
+        except OSError:
+            log_handle.close()
+            raise
         with self._lock:
             self._processes[record.id] = process
         on_started(process.pid)
 
-        deadline = time.monotonic() + record.request.options.max_duration_minutes * 60
+        deadline = (
+            time.monotonic() + record.request.options.max_duration_minutes * 60
+            if record.request.options.termination_policy == "consoleLimits"
+            else None
+        )
         timeout_sent = False
         try:
             while True:
                 return_code = process.poll()
                 if return_code is not None:
                     return return_code
-                if not timeout_sent and time.monotonic() >= deadline:
+                if (
+                    deadline is not None
+                    and not timeout_sent
+                    and time.monotonic() >= deadline
+                ):
                     timeout_sent = True
                     on_timeout()
                     self.stop(record.id)
                 time.sleep(0.25)
         finally:
+            log_handle.close()
             with self._lock:
                 self._processes.pop(record.id, None)
 
@@ -192,18 +210,17 @@ class StrixProcessAdapter:
                 "--non-interactive",
                 "--scan-mode",
                 request.options.scan_profile,
-                "--max-budget-usd",
-                str(request.options.max_budget_usd),
-                "--run-name",
-                record.engine_run_name,
-                "--instruction",
-                instruction,
             ]
         )
+        if request.options.termination_policy == "consoleLimits":
+            command.extend(["--max-budget-usd", str(request.options.max_budget_usd)])
+        command.extend(["--instruction", instruction])
 
         environment = dict(self.base_environment)
         environment.update(
             {
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
                 "STRIX_LLM": provider.model,
                 "STRIX_RUNS_DIR": str(self.run_root),
                 "STRIX_TELEMETRY": "false",
@@ -232,7 +249,10 @@ class StrixProcessAdapter:
             if executable.is_file():
                 return [str(executable)], None
             if (path / "strix" / "interface" / "main.py").is_file():
-                return [sys.executable, "-m", "strix.interface.main"], str(path)
+                python = Path(self.python_path or sys.executable).expanduser().resolve()
+                if not python.is_file():
+                    raise ScanManagerError("strixPythonNotFound")
+                return [str(python), "-m", "strix.interface.main"], str(path)
         raise ScanManagerError("strixNotFound")
 
 

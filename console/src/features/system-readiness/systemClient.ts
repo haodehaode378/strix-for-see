@@ -9,6 +9,10 @@ export function recheckSystem(): Promise<SystemReport> {
   return controlServiceJson<SystemReport>("/api/system/recheck", { method: "POST" });
 }
 
+export function prepareSystem(): Promise<SystemReport> {
+  return controlServiceJson<SystemReport>("/api/system/prepare", { method: "POST" });
+}
+
 export function getDiagnostics(): Promise<DiagnosticReport> {
   return controlServiceJson<DiagnosticReport>("/api/system/diagnostics");
 }

@@ -1,6 +1,7 @@
 export type TargetType = "web" | "local" | "repository" | "network";
 export type RiskMode = "safe" | "full";
 export type ScanProfile = "quick" | "standard" | "deep";
+export type TerminationPolicy = "consoleLimits" | "strixRules";
 export type ScanStatus =
   | "validating"
   | "queued"
@@ -24,6 +25,7 @@ export interface ScopeConfig {
 export interface ScanOptions {
   riskMode: RiskMode;
   scanProfile: ScanProfile;
+  terminationPolicy: TerminationPolicy;
   requestRatePerMinute: number;
   maxDurationMinutes: number;
   maxBudgetUsd: number;

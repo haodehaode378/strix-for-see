@@ -10,7 +10,12 @@ import pytest
 
 from strix_console_service.contracts import CreateScanRequest, ScanSummary
 from strix_console_service.provider import ProviderRuntime, ProviderService
-from strix_console_service.scan_manager import ProcessAdapter, ScanManager, _ScanRecord
+from strix_console_service.scan_manager import (
+    ProcessAdapter,
+    ScanManager,
+    StrixProcessAdapter,
+    _ScanRecord,
+)
 
 
 class MemoryCredentialStore:
@@ -294,3 +299,74 @@ def test_runtime_failures_use_safe_actionable_categories(
     )
 
     assert manager._classify_failure(record, 1) == expected
+
+
+def test_official_binary_command_does_not_use_custom_run_name_flag(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "strix.exe"
+    executable.touch()
+    adapter = StrixProcessAdapter(
+        run_root=tmp_path / "runs",
+        strix_path=str(executable),
+        environment={},
+    )
+    record = _ScanRecord.model_validate(
+        {
+            "id": "scan-id",
+            "idempotencyKey": "request-id",
+            "status": "queued",
+            "request": _request().model_dump(mode="json", by_alias=True),
+            "constraintInstruction": "scope",
+            "engineRunName": "console-scan-id",
+            "createdAt": "2026-08-10T00:00:00Z",
+            "updatedAt": "2026-08-10T00:00:00Z",
+        }
+    )
+
+    command, environment = adapter._build_command(
+        record,
+        ProviderRuntime(
+            provider="openai",
+            model="openai/gpt-5",
+            api_base=None,
+            api_key="secret",
+        ),
+    )
+
+    assert "--run-name" not in command
+    assert command[command.index("--max-budget-usd") + 1] == "10.0"
+    assert command[1:3] == ["--target", "https://example.com"]
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment["PYTHONUTF8"] == "1"
+
+    record.request.options.termination_policy = "strixRules"
+    strix_command, _environment = adapter._build_command(
+        record,
+        ProviderRuntime(
+            provider="openai",
+            model="openai/gpt-5",
+            api_base=None,
+            api_key="secret",
+        ),
+    )
+    assert "--max-budget-usd" not in strix_command
+
+
+def test_source_launcher_uses_configured_strix_python(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    (source / "strix" / "interface").mkdir(parents=True)
+    (source / "strix" / "interface" / "main.py").touch()
+    python = tmp_path / "strix-python.exe"
+    python.touch()
+    adapter = StrixProcessAdapter(
+        run_root=tmp_path / "runs",
+        strix_path=str(source),
+        python_path=str(python),
+        environment={},
+    )
+
+    command, python_path = adapter._resolved_launcher()
+
+    assert command == [str(python), "-m", "strix.interface.main"]
+    assert python_path == str(source)

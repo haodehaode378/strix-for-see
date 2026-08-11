@@ -42,8 +42,6 @@ def test_system_report_separates_required_and_optional_checks(tmp_path: Path) ->
     assert {check.id for check in report.checks if check.requirement == "optional"} == {
         "wsl",
         "git",
-        "sandbox",
-        "provider",
     }
     assert all("not-returned" not in (check.value or "") for check in report.checks)
 
@@ -62,7 +60,34 @@ def test_missing_docker_is_reported_without_raising(tmp_path: Path) -> None:
     assert not report.summary.ready
     assert checks["dockerCli"].status == "missing"
     assert checks["dockerDaemon"].issue == "dockerCliMissing"
-    assert checks["sandbox"].status == "warning"
+    assert checks["sandbox"].status == "missing"
+
+
+def test_prepare_starts_docker_desktop_when_daemon_is_unavailable(tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+    daemon_checks = 0
+
+    def command_runner(command: list[str]) -> CommandResult:
+        nonlocal daemon_checks
+        commands.append(command)
+        if "info" in command:
+            daemon_checks += 1
+            return CommandResult(return_code=1 if daemon_checks == 1 else 0, stdout="29.6.1")
+        return CommandResult(return_code=0, stdout="available")
+
+    inspector = SystemInspector(
+        run_root=tmp_path,
+        environment={"STRIX_CONSOLE_STRIX_PATH": str(tmp_path)},
+        command_runner=command_runner,
+        which=_which,
+        platform_name="win32",
+        provider_configured=lambda: True,
+    )
+
+    report = inspector.prepare()
+
+    assert ["C:/tools/docker.exe", "desktop", "start"] in commands
+    assert next(check for check in report.checks if check.id == "dockerDaemon").status == "ready"
 
 
 def test_redaction_removes_home_and_common_secret_forms(tmp_path: Path) -> None:

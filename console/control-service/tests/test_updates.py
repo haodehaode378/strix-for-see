@@ -8,7 +8,15 @@ from strix_console_service.app import create_app
 from strix_console_service.audit import AuditLog
 from strix_console_service.local_runs import RunRoot
 from strix_console_service.system_checks import CommandResult
-from strix_console_service.updates import UpdateError, UpdateService, _parse_pull_progress
+from strix_console_service.updates import (
+    _SANDBOX_DIGEST,
+    _SANDBOX_IMAGE,
+    _SANDBOX_SIZE_BYTES,
+    _SANDBOX_VERSION,
+    UpdateError,
+    UpdateService,
+    _parse_pull_progress,
+)
 
 ACCESS_TOKEN = "test-access-token"
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
@@ -57,7 +65,7 @@ def test_update_checks_are_stable_fixed_source_and_compatible() -> None:
     assert application.latest_version == "0.2.0"
     assert sandbox.compatible
     assert sandbox.available
-    assert sandbox.size_bytes == 123_456
+    assert sandbox.size_bytes == _SANDBOX_SIZE_BYTES
     assert commands[0][0:3] == ["docker", "image", "inspect"]
 
 
@@ -94,10 +102,8 @@ def test_sandbox_pull_requires_confirmation_and_uses_resolved_digest() -> None:
         if service.pull_status().state == "completed":
             break
         sleep(0.001)
-    assert pulled == [
-        f"ghcr.io/haodehaode378/strix-for-see-sandbox:1.4.0@{DIGEST}"
-    ]
-    assert service.pull_status().downloaded_bytes == 123_456
+    assert pulled == [f"{_SANDBOX_IMAGE}@{_SANDBOX_DIGEST}"]
+    assert service.pull_status().downloaded_bytes == _SANDBOX_SIZE_BYTES
 
 
 def test_update_api_never_accepts_an_image_from_the_browser(tmp_path: Path) -> None:
@@ -125,9 +131,8 @@ def test_update_api_never_accepts_an_image_from_the_browser(tmp_path: Path) -> N
 
     assert checked.status_code == 200
     assert started.status_code == 200
-    assert started.json()["image"].startswith(
-        "ghcr.io/haodehaode378/strix-for-see-sandbox:"
-    )
+    assert started.json()["image"] == _SANDBOX_IMAGE
+    assert started.json()["version"] == _SANDBOX_VERSION
 
 
 def test_audit_summary_ignores_corrupt_lines_and_never_stores_bodies(tmp_path: Path) -> None:

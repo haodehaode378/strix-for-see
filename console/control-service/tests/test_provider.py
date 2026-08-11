@@ -40,6 +40,26 @@ def test_provider_key_is_not_written_to_metadata_or_returned(tmp_path: Path) -> 
     assert store.values["StrixConsole/llm/openai"] == "secret-provider-key"
 
 
+def test_runtime_adds_provider_prefix_to_manually_entered_model(tmp_path: Path) -> None:
+    store = MemoryCredentialStore()
+    service = ProviderService(
+        config_path=tmp_path / "provider.json",
+        credential_store=store,
+    )
+    service.configure(
+        ProviderConfigRequest(
+            provider="openai",
+            model="deepseek-v4-pro",
+            api_key="secret-provider-key",
+        )
+    )
+
+    runtime = service.runtime()
+
+    assert runtime is not None
+    assert runtime.model == "openai/deepseek-v4-pro"
+
+
 def test_ollama_defaults_to_loopback_and_does_not_require_key(tmp_path: Path) -> None:
     service = ProviderService(
         config_path=tmp_path / "provider.json",

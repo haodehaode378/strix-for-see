@@ -189,7 +189,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 style="white",
             )
             for recommended_model in RECOMMENDED_MODEL_NAMES:
-                warn_text.append(f"• {recommended_model}\n", style="bold cyan")
+                warn_text.append(f"- {recommended_model}\n", style="bold cyan")
             warn_text.append(
                 "\nYou can continue, but weaker models may miss vulnerabilities "
                 "or produce lower-quality findings.",

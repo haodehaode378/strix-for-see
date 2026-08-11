@@ -28,6 +28,7 @@ vi.mock("../features/scan-control/useScans", () => ({
       options: {
         riskMode: "safe",
         scanProfile: "standard",
+        terminationPolicy: "consoleLimits",
         requestRatePerMinute: 30,
         maxDurationMinutes: 60,
         maxBudgetUsd: 10,

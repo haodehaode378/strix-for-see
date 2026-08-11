@@ -19,10 +19,10 @@ from strix_console_service.system_checks import CommandResult
 
 _REPOSITORY = "haodehaode378/strix-for-see"
 _APPLICATION_RELEASE_URL = f"https://api.github.com/repos/{_REPOSITORY}/releases/latest"
-_SANDBOX_MANIFEST_URL = (
-    f"https://github.com/{_REPOSITORY}/releases/latest/download/sandbox.json"
-)
-_SANDBOX_IMAGE_PREFIX = "ghcr.io/haodehaode378/strix-for-see-sandbox"
+_SANDBOX_VERSION = "1.3.0"
+_SANDBOX_IMAGE = f"ghcr.io/usestrix/strix-sandbox:{_SANDBOX_VERSION}"
+_SANDBOX_DIGEST = "sha256:f6906c3114e504fd1a218fcf028d7a0e46851118403a438b63956de6ea7c4331"
+_SANDBOX_SIZE_BYTES = 1_442_839_765
 _VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 _PULL_PROGRESS_PATTERN = re.compile(
     r"^(?P<layer>[0-9a-f]+):\s+Downloading.*?"
@@ -87,35 +87,15 @@ class UpdateService:
             raise UpdateError("scanActive")
 
     def check_sandbox(self) -> SandboxUpdate:
-        manifest = self.fetch_json(_SANDBOX_MANIFEST_URL)
-        version = _version(str(manifest.get("version", "")))
-        image = str(manifest.get("image", ""))
-        digest = str(manifest.get("digest", ""))
-        size_bytes = manifest.get("sizeBytes")
-        minimum = _version(str(manifest.get("minimumAppVersion", "0.0.0")))
-        maximum_value = manifest.get("maximumAppVersion")
-        maximum = _version(str(maximum_value)) if maximum_value else None
-        if (
-            not image.startswith(f"{_SANDBOX_IMAGE_PREFIX}:")
-            or "@" in image
-            or not digest.startswith("sha256:")
-            or len(digest) != 71
-            or not isinstance(size_bytes, int)
-            or size_bytes <= 0
-        ):
-            raise UpdateError("invalidSandboxManifest")
-        compatible = _version_tuple(__version__) >= _version_tuple(minimum) and (
-            maximum is None or _version_tuple(__version__) <= _version_tuple(maximum)
-        )
         current = self._local_sandbox_version()
         result = SandboxUpdate(
             current_version=current,
-            latest_version=version,
-            image=image,
-            digest=digest,
-            size_bytes=size_bytes,
-            compatible=compatible,
-            available=current != version,
+            latest_version=_SANDBOX_VERSION,
+            image=_SANDBOX_IMAGE,
+            digest=_SANDBOX_DIGEST,
+            size_bytes=_SANDBOX_SIZE_BYTES,
+            compatible=True,
+            available=current != _SANDBOX_VERSION,
         )
         with self._lock:
             self._sandbox = result
@@ -169,6 +149,10 @@ class UpdateService:
                 return
             self._pull_status.state = "verifying"
         result = self.command_runner(["docker", "image", "inspect", resolved_image])
+        if result.return_code == 0:
+            result = self.command_runner(
+                ["docker", "image", "tag", resolved_image, self._pull_status.image or ""]
+            )
         with self._lock:
             if result.return_code == 0:
                 self._pull_status.state = "completed"
@@ -183,15 +167,12 @@ class UpdateService:
                 "docker",
                 "image",
                 "inspect",
+                _SANDBOX_IMAGE,
                 "--format",
-                "{{ index .Config.Labels \"io.strix.sandbox.version\" }}",
-                f"{_SANDBOX_IMAGE_PREFIX}:latest",
+                "{{.Id}}",
             ]
         )
-        if result.return_code != 0:
-            return None
-        candidate = result.stdout.strip()
-        return candidate if _VERSION_PATTERN.fullmatch(candidate) else None
+        return _SANDBOX_VERSION if result.return_code == 0 else None
 
 
 def _fetch_json(url: str) -> dict[str, Any]:

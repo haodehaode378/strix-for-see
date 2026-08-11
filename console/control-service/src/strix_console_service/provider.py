@@ -212,7 +212,7 @@ class ProviderService:
             return None
         return ProviderRuntime(
             provider=provider,
-            model=metadata.model,
+            model=_runtime_model(provider, metadata.model),
             api_base=metadata.api_base,
             api_key=key,
         )
@@ -326,6 +326,13 @@ def default_credential_store() -> CredentialStore:
     if os.name == "nt":
         return WindowsCredentialStore()
     return EnvironmentCredentialStore()
+
+
+def _runtime_model(provider: ProviderKind, model: str) -> str:
+    if "/" in model:
+        return model
+    prefix = "openai" if provider == "openaiCompatible" else provider
+    return f"{prefix}/{model}"
 
 
 def _validate_api_base(provider: ProviderKind, value: str | None) -> str | None:

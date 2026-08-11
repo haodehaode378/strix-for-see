@@ -145,6 +145,7 @@ class LocalRunsResponse(CamelModel):
 TargetType = Literal["web", "local", "repository", "network"]
 RiskMode = Literal["safe", "full"]
 ScanProfile = Literal["quick", "standard", "deep"]
+TerminationPolicy = Literal["consoleLimits", "strixRules"]
 ScanStatus = Literal[
     "validating",
     "queued",
@@ -174,6 +175,7 @@ class ScanOptions(CamelModel):
 
     risk_mode: RiskMode = "safe"
     scan_profile: ScanProfile = "standard"
+    termination_policy: TerminationPolicy = "consoleLimits"
     request_rate_per_minute: int = Field(default=30, ge=1, le=120)
     max_duration_minutes: int = Field(default=60, ge=5, le=1440)
     max_budget_usd: float = Field(default=10, ge=0.01, le=1000)

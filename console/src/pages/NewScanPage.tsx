@@ -23,6 +23,7 @@ import type {
   ProviderStatus,
   RiskMode,
   ScanProfile,
+  TerminationPolicy,
   TargetType,
 } from "../features/scan-control/contracts";
 import { createScan } from "../features/scan-control/scanClient";
@@ -101,6 +102,7 @@ const initialRequest: CreateScanRequest = {
   options: {
     riskMode: "safe",
     scanProfile: "standard",
+    terminationPolicy: "consoleLimits",
     requestRatePerMinute: 30,
     maxDurationMinutes: 60,
     maxBudgetUsd: 10,
@@ -473,22 +475,60 @@ function OptionsStep({ request, setRequest }: ScanStepProps) {
           max={120}
           onChange={(value) => updateOptions({ requestRatePerMinute: value })}
         />
-        <NumberField
-          label={t("newScan.duration")}
-          value={request.options.maxDurationMinutes}
-          min={5}
-          max={1440}
-          onChange={(value) => updateOptions({ maxDurationMinutes: value })}
-        />
-        <NumberField
-          label={t("newScan.budget")}
-          value={request.options.maxBudgetUsd}
-          min={0.01}
-          max={1000}
-          step={0.01}
-          onChange={(value) => updateOptions({ maxBudgetUsd: value })}
-        />
       </div>
+      <fieldset className="mt-4">
+        <legend className="text-xs font-medium text-[var(--text-muted)]">
+          {t("newScan.terminationPolicy")}
+        </legend>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          {(["consoleLimits", "strixRules"] as TerminationPolicy[]).map((policy) => (
+            <button
+              key={policy}
+              type="button"
+              onClick={() => updateOptions({ terminationPolicy: policy })}
+              aria-pressed={request.options.terminationPolicy === policy}
+              className={`rounded-xl border p-3 text-left transition active:scale-[0.98] ${
+                request.options.terminationPolicy === policy
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)]"
+                  : "border-[var(--border)] hover:border-[var(--border-strong)]"
+              }`}
+            >
+              <span className="block text-sm font-semibold text-[var(--text)]">
+                {t(`newScan.termination.${policy}`)}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-[var(--text-muted)]">
+                {t(`newScan.termination.${policy}Hint`)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      {request.options.terminationPolicy === "consoleLimits" ? (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <NumberField
+            label={t("newScan.duration")}
+            value={request.options.maxDurationMinutes}
+            min={5}
+            max={1440}
+            onChange={(value) => updateOptions({ maxDurationMinutes: value })}
+          />
+          <NumberField
+            label={t("newScan.budget")}
+            value={request.options.maxBudgetUsd}
+            min={0.01}
+            max={1000}
+            step={0.01}
+            onChange={(value) => updateOptions({ maxBudgetUsd: value })}
+          />
+        </div>
+      ) : (
+        <div className="mt-4 flex gap-3 rounded-xl border border-[color-mix(in_srgb,var(--warning)_45%,var(--border))] bg-amber-500/5 p-4">
+          <CircleAlert className="mt-0.5 size-5 shrink-0 text-[var(--warning)]" />
+          <p className="text-xs leading-5 text-[var(--text-muted)]">
+            {t("newScan.termination.strixRulesWarning")}
+          </p>
+        </div>
+      )}
       <div className="mt-4">
         <Field
           label={t("newScan.instructions")}
@@ -536,6 +576,10 @@ function ReviewStep({
               ? "newScan.mode.safe"
               : "newScan.mode.full",
           )}
+        />
+        <ReviewRow
+          label={t("newScan.terminationPolicy")}
+          value={t(`newScan.termination.${request.options.terminationPolicy}`)}
         />
         <ReviewRow
           label={t("provider.title")}
