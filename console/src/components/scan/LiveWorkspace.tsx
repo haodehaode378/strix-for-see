@@ -199,7 +199,7 @@ function ScanFindings({
     <div>
       <EventList events={events} />
       <NavigationLink
-        to={`/findings?run=${encodeURIComponent(runName)}`}
+        to={`/findings/run/${encodeURIComponent(runName)}`}
         className="mt-5 inline-flex rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]"
       >
         {t("live.findings.open")}
@@ -219,7 +219,7 @@ function ScanReport({ runName }: { runName: string }) {
           {t("live.report.description")}
         </p>
         <NavigationLink
-          to={`/findings?run=${encodeURIComponent(runName)}`}
+          to={`/findings/run/${encodeURIComponent(runName)}`}
           className="mt-5 inline-flex rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]"
         >
           {t("live.report.open")}

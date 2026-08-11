@@ -106,4 +106,32 @@ describe("NewScanPage", () => {
       screen.getByText(/no Console duration or budget protection/),
     ).toBeInTheDocument();
   });
+
+  it("recognizes a Windows path and removes web-only scope fields", () => {
+    render(
+      <LocaleProvider>
+        <NavigationProvider>
+          <NewScanPage />
+        </NavigationProvider>
+      </LocaleProvider>,
+    );
+
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    fireEvent.click(continueButton);
+    fireEvent.change(screen.getByLabelText("Primary target"), {
+      target: { value: "E:\\projects\\authorized-source" },
+    });
+
+    expect(screen.getByRole("button", { name: /Local directory/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(continueButton);
+
+    expect(screen.getByText(/selected local directory and its descendants/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Additional allowed hosts/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Allowed ports/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Allowed paths/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Explicit exclusions/)).toBeInTheDocument();
+  });
 });

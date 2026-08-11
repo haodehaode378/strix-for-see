@@ -1,10 +1,11 @@
-import { FileSearch, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileSearch, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ReportExportPanel } from "../components/findings/ReportExportPanel";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SeverityBadge } from "../components/ui/SeverityBadge";
 import type {
+  Finding,
   FindingSeverity,
   FindingWorkflowState,
 } from "../features/findings/contracts";
@@ -34,14 +35,16 @@ function initialFilter(name: string): string {
   return new URLSearchParams(window.location.search).get(name) ?? "all";
 }
 
-export function FindingsPage() {
+export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
   const { locale, t } = useLocale();
-  const runName = new URLSearchParams(window.location.search).get("run") ?? undefined;
+  const runName = routeRunName ?? new URLSearchParams(window.location.search).get("run") ?? undefined;
   const { data, state, refresh } = useFindings(runName);
   const [severity, setSeverity] = useState(initialFilter("severity"));
   const [workflow, setWorkflow] = useState(initialFilter("state"));
   const [target, setTarget] = useState(initialFilter("target"));
   const [dateFrom, setDateFrom] = useState(initialFilter("from") === "all" ? "" : initialFilter("from"));
+
+  const tasks = useMemo(() => buildTaskSummaries(data?.findings ?? []), [data]);
 
   const targets = useMemo(
     () =>
@@ -77,8 +80,8 @@ export function FindingsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow={t("findings.eyebrow")}
-        title={t("findings.title")}
+        eyebrow={t(runName ? "findings.task.eyebrow" : "findings.eyebrow")}
+        title={t(runName ? "findings.task.title" : "findings.title")}
         description={
           runName ? `${t("findings.runScope")} ${runName}` : t("findings.description")
         }
@@ -99,7 +102,14 @@ export function FindingsPage() {
         <Notice text={t("findings.loadFailed")} action={refresh} />
       ) : null}
       {data ? (
-        <>
+        runName ? <>
+          <NavigationLink
+            to="/findings"
+            className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
+          >
+            <ArrowLeft className="size-4" />
+            {t("findings.backToTasks")}
+          </NavigationLink>
           <section className="mt-7 grid gap-px overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--border)] sm:grid-cols-4">
             {severities.slice(1).map((item) => (
               <div key={item} className="bg-[var(--surface)] p-4">
@@ -197,10 +207,87 @@ export function FindingsPage() {
               <ReportExportPanel findingIds={filtered.map((finding) => finding.id)} />
             </div>
           ) : null}
-        </>
+        </> : tasks.length ? (
+          <div className="mt-7 grid gap-3">
+            {tasks.map((task) => (
+              <NavigationLink
+                key={task.runName}
+                to={`/findings/run/${encodeURIComponent(task.runName)}`}
+                className="group grid gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] active:scale-[0.99] sm:grid-cols-[1fr_auto]"
+              >
+                <div className="min-w-0">
+                  <h2 className="truncate font-semibold">{task.runName}</h2>
+                  <p className="mt-2 truncate font-mono text-xs text-[var(--text-muted)]">
+                    {task.target ?? t("finding.partial")}
+                  </p>
+                  <p className="mt-3 text-xs text-[var(--text-muted)]">
+                    {task.findingCount} {t("findings.task.findingCount")}
+                  </p>
+                </div>
+                <div className="flex items-end justify-between gap-4 sm:flex-col sm:items-end">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {severities.slice(1).map((item) =>
+                      task.severityCounts[item as FindingSeverity] ? (
+                        <span
+                          key={item}
+                          className="rounded-md bg-[var(--surface-muted)] px-2 py-1 text-[11px] text-[var(--text-muted)]"
+                        >
+                          {t(`findings.severity.${item}` as MessageKey)} {task.severityCounts[item as FindingSeverity]}
+                        </span>
+                      ) : null,
+                    )}
+                  </div>
+                  <time className="text-xs text-[var(--text-muted)]">
+                    {formatRunDate(task.observedAt, locale)}
+                  </time>
+                </div>
+              </NavigationLink>
+            ))}
+          </div>
+        ) : (
+          <Notice text={data.findings.length ? t("findings.noTaskRecords") : t("findings.empty")} />
+        )
       ) : null}
     </div>
   );
+}
+
+function buildTaskSummaries(findings: Finding[]) {
+  const tasks = new Map<
+    string,
+    {
+      runName: string;
+      target: string | null;
+      observedAt: string | null;
+      findingIds: Set<string>;
+      severityCounts: Record<FindingSeverity, number>;
+    }
+  >();
+  for (const finding of findings) {
+    for (const occurrence of finding.occurrences) {
+      const task = tasks.get(occurrence.runName) ?? {
+        runName: occurrence.runName,
+        target: occurrence.target ?? finding.target,
+        observedAt: occurrence.observedAt,
+        findingIds: new Set<string>(),
+        severityCounts: { critical: 0, high: 0, medium: 0, low: 0 },
+      };
+      if (!task.findingIds.has(finding.id)) {
+        task.findingIds.add(finding.id);
+        task.severityCounts[finding.severity] += 1;
+      }
+      if (
+        occurrence.observedAt &&
+        (!task.observedAt || occurrence.observedAt > task.observedAt)
+      ) {
+        task.observedAt = occurrence.observedAt;
+      }
+      tasks.set(occurrence.runName, task);
+    }
+  }
+  return [...tasks.values()]
+    .map(({ findingIds, ...task }) => ({ ...task, findingCount: findingIds.size }))
+    .sort((left, right) => (right.observedAt ?? "").localeCompare(left.observedAt ?? ""));
 }
 
 function FilterSelect({

@@ -25,6 +25,13 @@ Sandbox images update separately from a fixed GHCR repository. `sandbox.json` mu
 version, digest, byte size, and compatible app-version range. Pulls use the immutable digest, expose
 download/verification state, and never delete an older image.
 
+For slow registries or offline delivery, each Console release also provides
+`strix-sandbox-<version>-amd64.tar.gz` and `install-sandbox-offline.ps1`. Put both files in one
+directory, start Docker Desktop, and run the script in PowerShell. The script imports the image
+under the exact runtime tag expected by Console, so no registry pull is required. The archive is a
+separate release asset because the compressed download is about 1.4 GB and the installed image
+expands to about 5.9 GB.
+
 ## Uninstall
 
 Stop scans, exit from the tray, then uninstall **Strix Console** from Windows Settings > Apps.

@@ -276,6 +276,7 @@ function TargetStep({
             <button
               key={type.value}
               type="button"
+              aria-pressed={request.targetType === type.value}
               onClick={() => {
                 setPreset("strict");
                 setRequest((current) => ({
@@ -307,12 +308,19 @@ function TargetStep({
           <input
             value={request.target}
             onChange={(event) => {
+              const target = event.target.value;
               setPreset("strict");
-              setRequest((current) => ({
-                ...current,
-                target: event.target.value,
-                scope: suggestScope(current.targetType, event.target.value, "strict"),
-              }));
+              setRequest((current) => {
+                const targetType = looksLikeWindowsPath(target)
+                  ? "local"
+                  : current.targetType;
+                return {
+                  ...current,
+                  targetType,
+                  target,
+                  scope: suggestScope(targetType, target, "strict"),
+                };
+              });
             }}
             placeholder={t(placeholder[request.targetType])}
             className={inputClass}
@@ -334,6 +342,16 @@ function ScopeStep({
   setPreset: (preset: BoundaryPreset) => void;
 }) {
   const { t } = useLocale();
+  const hasNetworkBoundary = request.targetType === "web" || request.targetType === "network";
+  const hasPathBoundary = request.targetType === "web";
+  const description =
+    request.targetType === "local"
+      ? "newScan.scopeDescription.local"
+      : request.targetType === "repository"
+        ? "newScan.scopeDescription.repository"
+        : request.targetType === "network"
+          ? "newScan.scopeDescription.network"
+          : "newScan.scopeDescription";
   const updateList = (
     key: keyof CreateScanRequest["scope"],
     value: string,
@@ -361,8 +379,8 @@ function ScopeStep({
   };
   return (
     <section>
-      <SectionIntro title={t("newScan.scopeTitle")} description={t("newScan.scopeDescription")} />
-      <fieldset className="mt-5">
+      <SectionIntro title={t("newScan.scopeTitle")} description={t(description)} />
+      {hasNetworkBoundary ? <fieldset className="mt-5">
         <legend className="text-xs font-medium text-[var(--text-muted)]">
           {t("newScan.boundaryPreset")}
         </legend>
@@ -388,17 +406,17 @@ function ScopeStep({
             </button>
           ))}
         </div>
-      </fieldset>
+      </fieldset> : null}
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <Field label={t("newScan.allowedHosts")} hint={t("newScan.commaHint")}>
+        {hasNetworkBoundary ? <Field label={t("newScan.allowedHosts")} hint={t("newScan.commaHint")}>
           <input
             key={request.scope.allowedHosts.join(",")}
             defaultValue={request.scope.allowedHosts.join(", ")}
             onBlur={(event) => updateList("allowedHosts", event.target.value)}
             className={inputClass}
           />
-        </Field>
-        <Field label={t("newScan.allowedPorts")} hint={t("newScan.commaHint")}>
+        </Field> : null}
+        {hasNetworkBoundary ? <Field label={t("newScan.allowedPorts")} hint={t("newScan.commaHint")}>
           <input
             key={request.scope.allowedPorts.join(",")}
             defaultValue={request.scope.allowedPorts.join(", ")}
@@ -406,8 +424,8 @@ function ScopeStep({
             placeholder="80, 443"
             className={inputClass}
           />
-        </Field>
-        <Field label={t("newScan.allowedPaths")} hint={t("newScan.pathsHint")}>
+        </Field> : null}
+        {hasPathBoundary ? <Field label={t("newScan.allowedPaths")} hint={t("newScan.pathsHint")}>
           <input
             key={request.scope.allowedPaths.join(",")}
             defaultValue={request.scope.allowedPaths.join(", ")}
@@ -415,7 +433,7 @@ function ScopeStep({
             placeholder="/api, /account"
             className={inputClass}
           />
-        </Field>
+        </Field> : null}
         <Field label={t("newScan.exclusions")} hint={t("newScan.commaHint")}>
           <input
             key={request.scope.exclusions.join(",")}
@@ -733,6 +751,10 @@ function splitList(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function looksLikeWindowsPath(value: string): boolean {
+  return /^(?:[a-zA-Z]:[\\/]|\\\\)/.test(value.trim());
 }
 
 function suggestScope(

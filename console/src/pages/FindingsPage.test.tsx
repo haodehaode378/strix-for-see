@@ -65,7 +65,15 @@ vi.mock("../features/findings/useFindings", () => ({
           cwe: null,
           cvss: null,
           locations: [],
-          occurrences: [],
+          occurrences: [
+            {
+              runId: "run-two",
+              runName: "run-two",
+              target: "https://api.example.com",
+              sourceFindingId: "vuln-2",
+              observedAt: "2026-07-27T02:00:00Z",
+            },
+          ],
           history: [],
         },
       ],
@@ -79,11 +87,28 @@ describe("FindingsPage", () => {
     window.history.replaceState({}, "", "/findings");
   });
 
-  it("renders untrusted titles as inert text and filters real findings", () => {
+  it("shows scan tasks before vulnerability details", () => {
     render(
       <LocaleProvider>
         <NavigationProvider>
           <FindingsPage />
+        </NavigationProvider>
+      </LocaleProvider>,
+    );
+
+    expect(screen.getByRole("link", { name: /run-one/ })).toHaveAttribute(
+      "href",
+      "/findings/run/run-one",
+    );
+    expect(screen.getByRole("link", { name: /run-two/ })).toBeInTheDocument();
+    expect(screen.queryByText("Stored <script>alert(1)</script>")).not.toBeInTheDocument();
+  });
+
+  it("renders untrusted titles as inert text and filters one task's findings", () => {
+    render(
+      <LocaleProvider>
+        <NavigationProvider>
+          <FindingsPage runName="run-one" />
         </NavigationProvider>
       </LocaleProvider>,
     );

@@ -38,6 +38,13 @@ export function App() {
   ];
 
   const page = (() => {
+    if (path.startsWith("/findings/run/")) {
+      return (
+        <FindingsPage
+          runName={decodeURIComponent(path.slice("/findings/run/".length))}
+        />
+      );
+    }
     if (path.startsWith("/findings/")) {
       return <FindingDetailPage id={decodeURIComponent(path.slice("/findings/".length))} />;
     }

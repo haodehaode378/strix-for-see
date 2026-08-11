@@ -5,6 +5,7 @@ import { ReportExportPanel } from "../components/findings/ReportExportPanel";
 import { SeverityBadge } from "../components/ui/SeverityBadge";
 import type { FindingWorkflowState } from "../features/findings/contracts";
 import { updateFinding } from "../features/findings/findingsClient";
+import { findingExplanation } from "../features/findings/findingExplanation";
 import { useFinding } from "../features/findings/useFindings";
 import { formatRunDate } from "../features/local-runs/formatRunDate";
 import type { MessageKey } from "../shared/i18n/messages";
@@ -84,6 +85,10 @@ export function FindingDetailPage({ id }: { id: string }) {
 
       <div className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <main className="min-w-0 space-y-5">
+          <FindingSection
+            title={t("finding.plainExplanation")}
+            value={t(`finding.explanation.${findingExplanation(finding)}` as MessageKey)}
+          />
           <FindingSection title={t("finding.description")} value={finding.description} />
           <FindingSection title={t("finding.evidence")} value={finding.evidence} code />
           <FindingSection title={t("finding.impact")} value={finding.impact} />

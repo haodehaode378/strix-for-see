@@ -80,11 +80,35 @@ jobs:
               maximumAppVersion: "0.1.0"
             }' > sandbox.json
 
+      - name: Create offline Sandbox package
+        shell: bash
+        env:
+          IMAGE: ${{ steps.sandbox.outputs.image }}
+          VERSION: ${{ steps.sandbox.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          runtime_image="ghcr.io/usestrix/strix-sandbox:$VERSION"
+          archive="strix-sandbox-$VERSION-amd64.tar.gz"
+          docker pull "$IMAGE@$DIGEST"
+          docker tag "$IMAGE@$DIGEST" "$runtime_image"
+          docker save "$runtime_image" | gzip -1 > "$archive"
+          test "$(stat -c%s "$archive")" -gt 0
+          test "$(stat -c%s "$archive")" -lt 2000000000 || {
+            echo "Offline Sandbox package exceeds the GitHub Release asset limit"
+            exit 1
+          }
+          cp scripts/install-sandbox-offline.ps1 install-sandbox-offline.ps1
+          pwsh -NoProfile -File ./install-sandbox-offline.ps1 "$archive" "$VERSION"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sandbox-manifest
-          path: sandbox.json
+          path: |
+            sandbox.json
+            strix-sandbox-*-amd64.tar.gz
+            install-sandbox-offline.ps1
           if-no-files-found: error
+          compression-level: 0
 
   build:
     needs: sandbox
@@ -301,6 +325,8 @@ jobs:
             console/src-tauri/target/release/bundle/nsis/*.sig
             console/src-tauri/target/release/bundle/nsis/latest.json
             console/src-tauri/target/release/bundle/nsis/sandbox.json
+            console/src-tauri/target/release/bundle/nsis/strix-sandbox-*-amd64.tar.gz
+            console/src-tauri/target/release/bundle/nsis/install-sandbox-offline.ps1
 
       - name: Upload release candidate
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -312,4 +338,6 @@ jobs:
             console/src-tauri/target/release/bundle/nsis/*.sig
             console/src-tauri/target/release/bundle/nsis/latest.json
             console/src-tauri/target/release/bundle/nsis/sandbox.json
+            console/src-tauri/target/release/bundle/nsis/strix-sandbox-*-amd64.tar.gz
+            console/src-tauri/target/release/bundle/nsis/install-sandbox-offline.ps1
           if-no-files-found: error
