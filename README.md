@@ -32,6 +32,56 @@
 
 </div>
 
+> [!IMPORTANT]
+> **关于本仓库 / About this fork**
+>
+> 本仓库是基于 [usestrix/strix](https://github.com/usestrix/strix) 开发的 Windows
+> 社区增强版，重点增加了本地 **Strix Console**：图形化 API 配置、环境检测与准备、
+> 扫描任务控制、Agent 过程查看、按任务隔离的漏洞详情和中英文报告导出。
+> Strix 扫描引擎、原始项目设计和文档来自上游项目；本仓库遵循其
+> [Apache License 2.0](LICENSE)。上游官网与文档请访问
+> [strix.ai](https://strix.ai) 和 [docs.strix.ai](https://docs.strix.ai)。
+>
+> This repository is a community Windows Console enhancement built on the
+> Apache-2.0-licensed [upstream Strix project](https://github.com/usestrix/strix).
+> It is not a replacement for the upstream project or its official documentation.
+
+## Windows Console 快速开始
+
+1. 安装并启动 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+2. 从 [最新 Release](https://github.com/haodehaode378/strix-for-see/releases/latest)
+   下载并运行 `Strix.Console_*_x64-setup.exe`。
+3. 打开 Console 的“环境检测”，点击“一键准备环境”。程序会检测 Docker，并拉取固定版本的
+   Sandbox。首次在线拉取约 1.4 GB，网络较慢时可能需要较长时间。
+4. 打开“设置”，选择模型服务，填写模型名称、API 地址（官方服务可留空）和 API Key，
+   依次点击“安全保存”和“测试连接”。API Key 只保存在 Windows 凭据管理器中。
+5. 打开“新建扫描”，选择网站/API 或本地项目目录，确认你有权测试该目标，然后选择
+   Quick/Deep、范围及结束规则并启动任务。
+6. 在任务页观察 Agent 进度；任务完成后，从“漏洞发现”按任务查看中文说明，并导出
+   HTML、PDF、Markdown 或 JSON 报告。
+
+### Docker 拉取慢：使用离线 Sandbox
+
+在同一个 [Release 页面](https://github.com/haodehaode378/strix-for-see/releases/latest)
+下载以下两个文件并放在同一目录：
+
+- `strix-sandbox-1.3.0-amd64.tar.gz`
+- `install-sandbox-offline.ps1`
+
+在该目录打开 PowerShell，执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-sandbox-offline.ps1 .\strix-sandbox-1.3.0-amd64.tar.gz
+```
+
+导入完成后重新打开 Console 的“环境检测”。`amd64` 在这里表示 64 位 x86（x86-64），
+适用于常见的 Intel/AMD 64 位 Windows 电脑。离线包约 1.47 GiB，解压导入后的 Docker
+镜像占用更大属于正常现象。
+
+> [!CAUTION]
+> 仅扫描你拥有或已获得明确授权的系统。Deep/完整测试可能提交表单、写入数据或上传文件，
+> 建议优先在隔离的测试环境中运行。
+
 
 > [!TIP]
 > **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai).
