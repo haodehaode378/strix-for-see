@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ def _write_finding_run(
     root: Path,
     name: str,
     *,
+    display_name: str | None = None,
     target: str = "https://example.com",
     finding_id: str = "vuln-0001",
 ) -> None:
@@ -28,7 +30,7 @@ def _write_finding_run(
     (run / "run.json").write_text(
         json.dumps(
             {
-                "run_name": name,
+                "run_name": display_name or name,
                 "status": "completed",
                 "end_time": "2026-07-28T02:00:00Z",
                 "targets_info": [{"original": target}],
@@ -46,6 +48,7 @@ def _write_finding_run(
                     "target": target,
                     "endpoint": "/profile",
                     "method": "POST",
+                    "affected_inputs": ["profile.bio"],
                     "cwe": "CWE-79",
                     "description": "A stored payload executes in another browser.",
                     "evidence": "Authorization: Bearer secret-value",
@@ -74,7 +77,6 @@ def test_findings_are_deduplicated_across_runs_and_redacted(tmp_path: Path) -> N
         LocalRunIndexer([RunRoot(root, writable=True)]),
         tmp_path / "state" / "findings.json",
     )
-
     response = store.list_findings()
 
     assert len(response.findings) == 1
@@ -167,12 +169,14 @@ def test_exports_have_correct_types_and_apply_redaction(
         LocalRunIndexer([RunRoot(root, writable=True)]),
         tmp_path / "state" / "findings.json",
     )
+    run_id = store.indexer.list_runs().runs[0].id
 
     payload, actual_media_type, _filename = store.export(
         ExportFindingsRequest.model_validate(
             {
                 "format": report_format,
                 "locale": "en-US",
+                "runId": run_id,
                 "redaction": {
                     "omitEvidence": True,
                     "omitPoc": True,
@@ -197,6 +201,105 @@ def test_exports_have_correct_types_and_apply_redaction(
         assert exported[0]["locations"] == []
 
 
+def test_export_is_scoped_to_one_task(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    _write_finding_run(root, "selected-task")
+    _write_finding_run(root, "other-task")
+    store = FindingStore(
+        LocalRunIndexer([RunRoot(root, writable=True)]),
+        tmp_path / "state" / "findings.json",
+    )
+    run_id = next(run.id for run in store.indexer.list_runs().runs if run.name == "selected-task")
+
+    payload, _media_type, filename = store.export(
+        ExportFindingsRequest.model_validate(
+            {"format": "json", "locale": "zh-CN", "runId": run_id}
+        )
+    )
+    exported = json.loads(payload)
+
+    assert "selected-task" in filename
+    assert [item["runName"] for item in exported[0]["occurrences"]] == ["selected-task"]
+
+
+def test_duplicate_task_names_are_isolated_by_run_id(tmp_path: Path) -> None:
+    first_root = tmp_path / "first-root"
+    second_root = tmp_path / "second-root"
+    _write_finding_run(first_root, "run-a", display_name="duplicate")
+    _write_finding_run(second_root, "run-b", display_name="duplicate")
+    store = FindingStore(
+        LocalRunIndexer(
+            [RunRoot(first_root, writable=True), RunRoot(second_root, writable=True)]
+        ),
+        tmp_path / "state" / "findings.json",
+    )
+    first_run, second_run = store.indexer.list_runs().runs
+    first_finding = store.list_findings(run_id=first_run.id).findings[0]
+    second_finding = store.list_findings(run_id=second_run.id).findings[0]
+
+    store.update(
+        first_finding.id,
+        UpdateFindingRequest(workflow_state="confirmed", note="first run only"),
+        run_id=first_run.id,
+    )
+
+    updated_first = store.get(first_finding.id, run_id=first_run.id)
+    untouched_second = store.get(second_finding.id, run_id=second_run.id)
+    assert updated_first is not None and updated_first.workflow_state == "confirmed"
+    assert [entry.note for entry in updated_first.history if entry.note] == ["first run only"]
+    assert untouched_second is not None and untouched_second.workflow_state == "pending"
+    assert untouched_second.history == []
+
+    for report_format in ("html", "pdf", "markdown", "json"):
+        payload, _media_type, _filename = store.export(
+            ExportFindingsRequest.model_validate(
+                {"format": report_format, "runId": first_run.id}
+            )
+        )
+        assert payload
+        if report_format == "json":
+            exported = json.loads(payload)
+            assert [item["runId"] for item in exported[0]["occurrences"]] == [
+                first_run.id
+            ]
+
+
+def test_export_to_file_returns_redacted_display_path(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    export_root = tmp_path / "exports"
+    _write_finding_run(root, "saved-report")
+    store = FindingStore(
+        LocalRunIndexer([RunRoot(root, writable=True)]),
+        tmp_path / "state" / "findings.json",
+        export_root,
+    )
+    run_id = store.indexer.list_runs().runs[0].id
+
+    filename, display_path = store.export_to_file(
+        ExportFindingsRequest(format="markdown", run_id=run_id)
+    )
+
+    assert (export_root / filename).read_bytes().startswith(b"# ")
+    assert str(Path.home()) not in display_path
+
+
+def test_export_folder_opens_only_the_fixed_export_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_root = tmp_path / "exports"
+    opened: list[Path] = []
+    monkeypatch.setattr(os, "startfile", lambda path: opened.append(Path(path)))
+    store = FindingStore(
+        LocalRunIndexer([RunRoot(tmp_path / "runs", writable=True)]),
+        tmp_path / "state" / "findings.json",
+        export_root,
+    )
+
+    store.open_export_folder()
+
+    assert opened == [export_root]
+
+
 def test_findings_api_supports_read_update_and_download(tmp_path: Path) -> None:
     root = tmp_path / "runs"
     _write_finding_run(root, "api")
@@ -209,16 +312,22 @@ def test_findings_api_supports_read_update_and_download(tmp_path: Path) -> None:
     )
 
     listing = client.get("/api/findings", headers=AUTH_HEADERS)
+    run_id = client.get("/api/local-runs", headers=AUTH_HEADERS).json()["runs"][0]["id"]
     finding_id = listing.json()["findings"][0]["id"]
     updated = client.patch(
-        f"/api/findings/{finding_id}",
+        f"/api/runs/{run_id}/findings/{finding_id}",
         headers=AUTH_HEADERS,
         json={"workflowState": "confirmed", "note": "Confirmed locally"},
     )
     export = client.post(
         "/api/findings/export",
         headers=AUTH_HEADERS,
-        json={"format": "json", "locale": "en-US"},
+        json={"format": "json", "locale": "en-US", "runId": run_id},
+    )
+    saved = client.post(
+        "/api/findings/export-file",
+        headers=AUTH_HEADERS,
+        json={"format": "html", "locale": "zh-CN", "runId": run_id},
     )
 
     assert listing.status_code == 200
@@ -227,3 +336,7 @@ def test_findings_api_supports_read_update_and_download(tmp_path: Path) -> None:
     assert export.status_code == 200
     assert export.headers["content-type"].startswith("application/json")
     assert export.headers["content-disposition"].startswith("attachment;")
+    assert saved.status_code == 200
+    assert saved.json()["runName"] == "api"
+    assert saved.json()["filename"].endswith(".html")
+    assert "exports" in saved.json()["displayPath"]

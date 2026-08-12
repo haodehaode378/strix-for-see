@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Finding, FindingsResponse } from "./contracts";
 import { getFinding, getFindings } from "./findingsClient";
 
-export function useFindings(runName?: string) {
+export function useFindings(runId?: string) {
   const [data, setData] = useState<FindingsResponse | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [attempt, setAttempt] = useState(0);
@@ -14,7 +14,7 @@ export function useFindings(runName?: string) {
 
   useEffect(() => {
     const controller = new AbortController();
-    getFindings(runName, controller.signal).then(
+    getFindings(runId, controller.signal).then(
       (value) => {
         setData(value);
         setState("ready");
@@ -25,17 +25,17 @@ export function useFindings(runName?: string) {
       },
     );
     return () => controller.abort();
-  }, [attempt, runName]);
+  }, [attempt, runId]);
   return { data, state, refresh };
 }
 
-export function useFinding(id: string) {
+export function useFinding(id: string, runId: string) {
   const [finding, setFinding] = useState<Finding | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     const controller = new AbortController();
-    getFinding(id, controller.signal).then(
+    getFinding(id, runId, controller.signal).then(
       (value) => {
         setFinding(value);
         setState("ready");
@@ -47,6 +47,6 @@ export function useFinding(id: string) {
       },
     );
     return () => controller.abort();
-  }, [id]);
+  }, [id, runId]);
   return { finding, setFinding, state };
 }

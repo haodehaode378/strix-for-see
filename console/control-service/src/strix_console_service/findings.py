@@ -32,6 +32,7 @@ from reportlab.platypus import (
 from strix_console_service.contracts import (
     ExportFindingsRequest,
     Finding,
+    FindingExplanationDetails,
     FindingHistoryEntry,
     FindingLocation,
     FindingOccurrence,
@@ -42,6 +43,7 @@ from strix_console_service.contracts import (
 )
 from strix_console_service.events import redact_event_value
 from strix_console_service.local_runs import LocalRunIndexer
+from strix_console_service.system_checks import redact_text
 
 _SEVERITIES = {"critical", "high", "medium", "low"}
 _TERMINAL_STATES = {"acceptedRisk", "fixed", "falsePositive"}
@@ -59,16 +61,24 @@ class FindingStoreError(Exception):
 class FindingStore:
     """Read authoritative findings and maintain a separate local review overlay."""
 
-    def __init__(self, indexer: LocalRunIndexer, state_path: Path) -> None:
+    def __init__(
+        self, indexer: LocalRunIndexer, state_path: Path, export_root: Path | None = None
+    ) -> None:
         self.indexer = indexer
         self.state_path = state_path
+        self.export_root = export_root or state_path.parent.parent / "exports"
         self._lock = threading.RLock()
 
-    def list_findings(self, *, run_name: str | None = None) -> FindingsResponse:
+    def list_findings(
+        self, *, run_id: str | None = None, run_name: str | None = None
+    ) -> FindingsResponse:
         with self._lock:
             overlays = self._read_overlays()
             aggregates: dict[str, Finding] = {}
-            for run in self.indexer.list_runs().runs:
+            runs = self.indexer.list_runs().runs
+            if run_id is not None:
+                runs = [run for run in runs if run.id == run_id]
+            for run in runs:
                 if run_name is not None and run.name != run_name:
                     continue
                 artifact = self.indexer.resolve_artifact(run.id, "vulnerabilities.json")
@@ -85,7 +95,9 @@ class FindingStore:
                     )
                     existing = aggregates.get(finding_id)
                     if existing is None:
-                        overlay = overlays.get(finding_id, {})
+                        overlay = overlays.get(_overlay_key(run.id, finding_id))
+                        if not isinstance(overlay, dict):
+                            overlay = overlays.get(finding_id, {})
                         aggregates[finding_id] = _project_finding(
                             finding_id, item, run.target, occurrence, overlay
                         )
@@ -108,23 +120,30 @@ class FindingStore:
                 severity_counts=SeverityCounts(**counts),
             )
 
-    def get(self, finding_id: str) -> Finding | None:
+    def get(self, finding_id: str, *, run_id: str | None = None) -> Finding | None:
         return next(
-            (finding for finding in self.list_findings().findings if finding.id == finding_id),
+            (
+                finding
+                for finding in self.list_findings(run_id=run_id).findings
+                if finding.id == finding_id
+            ),
             None,
         )
 
-    def update(self, finding_id: str, request: UpdateFindingRequest) -> Finding:
+    def update(
+        self, finding_id: str, request: UpdateFindingRequest, *, run_id: str | None = None
+    ) -> Finding:
         with self._lock:
-            finding = self.get(finding_id)
+            finding = self.get(finding_id, run_id=run_id)
             if finding is None:
                 raise FindingStoreError("findingNotFound")
             if request.workflow_state is None and request.note is None:
                 raise FindingStoreError("findingUpdateEmpty")
 
             overlays = self._read_overlays()
+            overlay_key = _overlay_key(run_id, finding_id) if run_id else finding_id
             overlay = overlays.setdefault(
-                finding_id,
+                overlay_key,
                 {"workflowState": finding.workflow_state, "history": []},
             )
             history = overlay.setdefault("history", [])
@@ -159,13 +178,16 @@ class FindingStore:
                     }
                 )
             self._write_overlays(overlays)
-            updated = self.get(finding_id)
+            updated = self.get(finding_id, run_id=run_id)
             if updated is None:
                 raise FindingStoreError("findingNotFound")
             return updated
 
     def export(self, request: ExportFindingsRequest) -> tuple[bytes, str, str]:
-        all_findings = self.list_findings().findings
+        run = self.indexer.get_run(request.run_id)
+        if run is None:
+            raise FindingStoreError("runNotFound")
+        all_findings = self.list_findings(run_id=request.run_id).findings
         selected_ids = set(request.finding_ids)
         findings = (
             [finding for finding in all_findings if finding.id in selected_ids]
@@ -178,9 +200,11 @@ class FindingStore:
             raise FindingStoreError("noFindingsToExport")
 
         report = _redact_for_export(findings, request)
-        stamp = datetime.now(UTC).strftime("%Y%m%d")
+        stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         extension = request.format if request.format != "markdown" else "md"
-        filename = f"strix-findings-{stamp}.{extension}"
+        run_label = run.name
+        scope = f"-{_filename_part(run_label)}" if run_label else ""
+        filename = f"strix-findings{scope}-{stamp}.{extension}"
         if request.format == "json":
             payload = json.dumps(
                 [
@@ -204,6 +228,27 @@ class FindingStore:
                 filename,
             )
         return _render_pdf(report, request.locale), "application/pdf", filename
+
+    def export_to_file(self, request: ExportFindingsRequest) -> tuple[str, str]:
+        payload, _media_type, filename = self.export(request)
+        with self._lock:
+            self.export_root.mkdir(parents=True, exist_ok=True)
+            destination = self.export_root / filename
+            counter = 2
+            while destination.exists():
+                candidate = f"{Path(filename).stem}-{counter}{Path(filename).suffix}"
+                destination = self.export_root / candidate
+                counter += 1
+            temporary = destination.with_suffix(f"{destination.suffix}.tmp")
+            temporary.write_bytes(payload)
+            temporary.replace(destination)
+        return destination.name, redact_text(str(destination), home=Path.home())
+
+    def open_export_folder(self) -> None:
+        self.export_root.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            raise OSError("exportFolderUnsupported")
+        os.startfile(self.export_root)  # noqa: S606 - fixed local export directory
 
     def _read_overlays(self) -> dict[str, dict[str, Any]]:
         if not self.state_path.is_file():
@@ -286,6 +331,17 @@ def _project_finding(
                     snippet=_safe_text(raw.get("snippet")),
                 )
             )
+    affected_inputs = _string_list(item.get("affected_inputs"))
+    endpoint = _safe_text(item.get("endpoint"))
+    method = _safe_text(item.get("method"))
+    interface_or_feature: str | None = " ".join(
+        value for value in [method, endpoint] if value
+    )
+    if not interface_or_feature:
+        location = next((value for value in locations if value.label or value.file), None)
+        interface_or_feature = (
+            (location.label or location.file) if location is not None else None
+        ) or _safe_text(item.get("target") or run_target)
     return Finding(
         id=finding_id,
         title=_safe_text(item.get("title")) or "Untitled finding",
@@ -299,14 +355,22 @@ def _project_finding(
         poc_description=_safe_text(item.get("poc_description")),
         poc_script_code=_safe_text(item.get("poc_script_code")),
         remediation_steps=_safe_text(item.get("remediation_steps")),
-        endpoint=_safe_text(item.get("endpoint")),
-        method=_safe_text(item.get("method")),
+        endpoint=endpoint,
+        method=method,
+        affected_inputs=affected_inputs,
         cve=_safe_text(item.get("cve")),
         cwe=_safe_text(item.get("cwe")),
         cvss=_number(item.get("cvss")),
         locations=locations,
         occurrences=[occurrence],
         history=history,
+        explanation=FindingExplanationDetails(
+            interface_or_feature=interface_or_feature,
+            affected_inputs=affected_inputs,
+            prerequisites=_safe_text(item.get("assumptions")),
+            trigger_behavior=_safe_text(item.get("poc_description")),
+            real_impact=_safe_text(item.get("impact")),
+        ),
     )
 
 
@@ -321,6 +385,28 @@ def _safe_text(value: Any) -> str | None:
             safe,
         )
     return safe[:_MAX_FIELD] if isinstance(safe, str) and safe else None
+
+
+def _filename_part(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+    return normalized[:80] or "task"
+
+
+def _overlay_key(run_id: str, finding_id: str) -> str:
+    return f"run:{run_id}:finding:{finding_id}"
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:100]:
+        text = _safe_text(item)
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _string(item: dict[str, Any], key: str) -> str | None:
@@ -352,6 +438,7 @@ def _redact_for_export(
         if request.redaction.omit_poc:
             finding.poc_description = None
             finding.poc_script_code = None
+            finding.explanation.trigger_behavior = None
         if request.redaction.omit_paths:
             finding.locations = []
     return copies
@@ -373,6 +460,11 @@ _LABELS = {
         "locations": "受影响位置",
         "occurrences": "出现记录",
         "partial": "未提供",
+        "explanationInterface": "哪个接口或功能?",
+        "explanationInput": "哪个参数或输入?",
+        "explanationPrerequisites": "需要什么权限和前置条件?",
+        "explanationTrigger": "预期触发什么行为?",
+        "explanationImpact": "会产生什么真实影响?",
     },
     "en-US": {
         "title": "Strix Findings Report",
@@ -389,6 +481,11 @@ _LABELS = {
         "locations": "Affected locations",
         "occurrences": "Occurrences",
         "partial": "Not provided",
+        "explanationInterface": "Affected interface or feature",
+        "explanationInput": "Affected parameter or input",
+        "explanationPrerequisites": "Permissions and prerequisites",
+        "explanationTrigger": "Expected trigger behavior",
+        "explanationImpact": "Real-world impact",
     },
 }
 _SEVERITY_LABELS = {
@@ -615,7 +712,14 @@ def _sections(finding: Finding, labels: dict[str, str]) -> list[tuple[str, str |
     poc = "\n\n".join(
         value for value in [finding.poc_description, finding.poc_script_code] if value
     )
+    explanation = finding.explanation
+    affected_inputs = ", ".join(explanation.affected_inputs)
     return [
+        (labels["explanationInterface"], explanation.interface_or_feature or labels["partial"]),
+        (labels["explanationInput"], affected_inputs or labels["partial"]),
+        (labels["explanationPrerequisites"], explanation.prerequisites or labels["partial"]),
+        (labels["explanationTrigger"], explanation.trigger_behavior or labels["partial"]),
+        (labels["explanationImpact"], explanation.real_impact or labels["partial"]),
         (labels["description"], finding.description),
         (labels["evidence"], finding.evidence),
         (labels["impact"], finding.impact),

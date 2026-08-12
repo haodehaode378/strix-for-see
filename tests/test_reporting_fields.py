@@ -64,6 +64,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cve=None,
         cwe="CWE-79",
         code_locations=None,
+        affected_inputs=["q", "redirect_uri"],
         fix_pr_body="## Fix\nEncode output.",
     )
     assert result["success"] is True
@@ -73,6 +74,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
     assert report["finding_class"] == "dynamic"
+    assert report["affected_inputs"] == ["q", "redirect_uri"]
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -866,7 +868,13 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
 
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in (
+        "evidence",
+        "assumptions",
+        "affected_inputs",
+        "fix_effort",
+        "fix_pr_body",
+    ):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]

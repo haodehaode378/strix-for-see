@@ -35,16 +35,19 @@ function initialFilter(name: string): string {
   return new URLSearchParams(window.location.search).get(name) ?? "all";
 }
 
-export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
+export function FindingsPage({ runId, runName: legacyRunName }: { runId?: string; runName?: string }) {
   const { locale, t } = useLocale();
-  const runName = routeRunName ?? new URLSearchParams(window.location.search).get("run") ?? undefined;
-  const { data, state, refresh } = useFindings(runName);
+  const effectiveRunId = runId ?? legacyRunName;
+  const { data, state, refresh } = useFindings(effectiveRunId);
   const [severity, setSeverity] = useState(initialFilter("severity"));
   const [workflow, setWorkflow] = useState(initialFilter("state"));
   const [target, setTarget] = useState(initialFilter("target"));
   const [dateFrom, setDateFrom] = useState(initialFilter("from") === "all" ? "" : initialFilter("from"));
 
   const tasks = useMemo(() => buildTaskSummaries(data?.findings ?? []), [data]);
+  const runName = effectiveRunId
+    ? data?.findings[0]?.occurrences[0]?.runName ?? legacyRunName
+    : undefined;
 
   const targets = useMemo(
     () =>
@@ -80,10 +83,12 @@ export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
   return (
     <div>
       <PageHeader
-        eyebrow={t(runName ? "findings.task.eyebrow" : "findings.eyebrow")}
-        title={t(runName ? "findings.task.title" : "findings.title")}
+        eyebrow={t(effectiveRunId ? "findings.task.eyebrow" : "findings.eyebrow")}
+        title={t(effectiveRunId ? "findings.task.title" : "findings.title")}
         description={
-          runName ? `${t("findings.runScope")} ${runName}` : t("findings.description")
+          effectiveRunId
+            ? `${t("findings.runScope")} ${runName ?? effectiveRunId}`
+            : t("findings.description")
         }
         actions={
           <button
@@ -102,7 +107,7 @@ export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
         <Notice text={t("findings.loadFailed")} action={refresh} />
       ) : null}
       {data ? (
-        runName ? <>
+        effectiveRunId ? <>
           <NavigationLink
             to="/findings"
             className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
@@ -175,7 +180,7 @@ export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
               {filtered.map((finding) => (
                 <NavigationLink
                   key={finding.id}
-                  to={`/findings/${finding.id}`}
+                  to={`/findings/task/${encodeURIComponent(effectiveRunId)}/${encodeURIComponent(finding.id)}`}
                   className="group grid gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] sm:grid-cols-[1fr_auto]"
                 >
                   <div className="min-w-0">
@@ -202,17 +207,17 @@ export function FindingsPage({ runName: routeRunName }: { runName?: string }) {
               ))}
             </div>
           )}
-          {filtered.length > 0 ? (
+          {data.findings.length > 0 && effectiveRunId ? (
             <div className="mt-7">
-              <ReportExportPanel findingIds={filtered.map((finding) => finding.id)} />
+              <ReportExportPanel runId={effectiveRunId} runName={runName} />
             </div>
           ) : null}
         </> : tasks.length ? (
           <div className="mt-7 grid gap-3">
             {tasks.map((task) => (
               <NavigationLink
-                key={task.runName}
-                to={`/findings/run/${encodeURIComponent(task.runName)}`}
+                key={task.runId}
+                to={`/findings/task/${encodeURIComponent(task.runId)}`}
                 className="group grid gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 transition hover:-translate-y-0.5 hover:border-[var(--border-strong)] active:scale-[0.99] sm:grid-cols-[1fr_auto]"
               >
                 <div className="min-w-0">
@@ -257,6 +262,7 @@ function buildTaskSummaries(findings: Finding[]) {
     string,
     {
       runName: string;
+      runId: string;
       target: string | null;
       observedAt: string | null;
       findingIds: Set<string>;
@@ -265,7 +271,8 @@ function buildTaskSummaries(findings: Finding[]) {
   >();
   for (const finding of findings) {
     for (const occurrence of finding.occurrences) {
-      const task = tasks.get(occurrence.runName) ?? {
+      const task = tasks.get(occurrence.runId) ?? {
+        runId: occurrence.runId,
         runName: occurrence.runName,
         target: occurrence.target ?? finding.target,
         observedAt: occurrence.observedAt,
@@ -282,7 +289,7 @@ function buildTaskSummaries(findings: Finding[]) {
       ) {
         task.observedAt = occurrence.observedAt;
       }
-      tasks.set(occurrence.runName, task);
+      tasks.set(occurrence.runId, task);
     }
   }
   return [...tasks.values()]

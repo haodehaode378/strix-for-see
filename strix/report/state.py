@@ -231,6 +231,7 @@ class ReportState:
         cvss_breakdown: dict[str, str] | None = None,
         endpoint: str | None = None,
         method: str | None = None,
+        affected_inputs: list[str] | None = None,
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
@@ -277,6 +278,14 @@ class ReportState:
             report["endpoint"] = endpoint.strip()
         if method:
             report["method"] = method.strip()
+        if affected_inputs:
+            report["affected_inputs"] = list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in affected_inputs[:100]
+                    if isinstance(value, str) and value.strip()
+                )
+            )
         if cve:
             report["cve"] = cve.strip()
         if cwe:

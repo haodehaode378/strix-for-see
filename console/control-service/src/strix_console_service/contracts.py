@@ -344,6 +344,16 @@ class FindingHistoryEntry(CamelModel):
     note: str | None = None
 
 
+class FindingExplanationDetails(CamelModel):
+    """Evidence-backed facts used by the UI and every export renderer."""
+
+    interface_or_feature: str | None = None
+    affected_inputs: list[str] = Field(default_factory=list, max_length=100)
+    prerequisites: str | None = None
+    trigger_behavior: str | None = None
+    real_impact: str | None = None
+
+
 class Finding(CamelModel):
     """Safe aggregate of one issue across local runs."""
 
@@ -362,12 +372,14 @@ class Finding(CamelModel):
     remediation_steps: str | None = None
     endpoint: str | None = None
     method: str | None = None
+    affected_inputs: list[str] = Field(default_factory=list, max_length=100)
     cve: str | None = None
     cwe: str | None = None
     cvss: float | None = None
     locations: list[FindingLocation] = Field(default_factory=list)
     occurrences: list[FindingOccurrence] = Field(default_factory=list)
     history: list[FindingHistoryEntry] = Field(default_factory=list)
+    explanation: FindingExplanationDetails = Field(default_factory=FindingExplanationDetails)
 
 
 class FindingsResponse(CamelModel):
@@ -395,8 +407,16 @@ class ReportRedaction(CamelModel):
 class ExportFindingsRequest(CamelModel):
     format: ReportFormat
     locale: ReportLocale = "zh-CN"
+    run_id: str = Field(min_length=1, max_length=64)
     finding_ids: list[str] = Field(default_factory=list, max_length=500)
     redaction: ReportRedaction = Field(default_factory=ReportRedaction)
+
+
+class ExportFindingsResponse(CamelModel):
+    filename: str
+    display_path: str
+    run_id: str
+    run_name: str | None = None
 
 
 ProviderKind = Literal["openai", "anthropic", "gemini", "openaiCompatible", "ollama"]

@@ -4,21 +4,29 @@ import {
 } from "../../shared/api/controlServiceClient";
 import type {
   ExportOptions,
+  ExportResult,
   Finding,
   FindingsResponse,
   FindingWorkflowState,
 } from "./contracts";
 
 export function getFindings(
-  runName?: string,
+  runId?: string,
   signal?: AbortSignal,
 ): Promise<FindingsResponse> {
-  const query = runName ? `?run_name=${encodeURIComponent(runName)}` : "";
-  return controlServiceJson<FindingsResponse>(`/api/findings${query}`, { signal });
+  const path = runId
+    ? `/api/runs/${encodeURIComponent(runId)}/findings`
+    : "/api/findings";
+  return controlServiceJson<FindingsResponse>(path, { signal });
 }
 
-export function getFinding(id: string, signal?: AbortSignal): Promise<Finding> {
-  return controlServiceJson<Finding>(`/api/findings/${encodeURIComponent(id)}`, {
+export function getFinding(
+  id: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<Finding> {
+  const path = `/api/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(id)}`;
+  return controlServiceJson<Finding>(path, {
     signal,
   });
 }
@@ -26,30 +34,29 @@ export function getFinding(id: string, signal?: AbortSignal): Promise<Finding> {
 export function updateFinding(
   id: string,
   update: { workflowState?: FindingWorkflowState; note?: string },
+  runId: string,
 ): Promise<Finding> {
-  return controlServiceJson<Finding>(`/api/findings/${encodeURIComponent(id)}`, {
+  const path = `/api/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(id)}`;
+  return controlServiceJson<Finding>(path, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(update),
   });
 }
 
-export async function exportFindings(options: ExportOptions): Promise<void> {
-  const response = await controlServiceFetch("/api/findings/export", {
+export function exportFindings(options: ExportOptions): Promise<ExportResult> {
+  return controlServiceJson<ExportResult>("/api/findings/export-file", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(options),
   });
+}
+
+export async function openExportFolder(): Promise<void> {
+  const response = await controlServiceFetch("/api/findings/export-folder", {
+    method: "POST",
+  });
   if (!response.ok) {
-    throw new Error(`Report export failed with ${response.status}`);
+    throw new Error(`Export folder could not be opened (${response.status})`);
   }
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const filename =
-    disposition.match(/filename="([^"]+)"/)?.[1] ?? `strix-findings.${options.format}`;
-  const url = URL.createObjectURL(await response.blob());
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }

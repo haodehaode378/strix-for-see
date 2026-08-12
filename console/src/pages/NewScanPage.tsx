@@ -380,6 +380,9 @@ function ScopeStep({
   return (
     <section>
       <SectionIntro title={t("newScan.scopeTitle")} description={t(description)} />
+      <p className="mt-4 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-3 text-xs leading-5 text-[var(--text-muted)]">
+        {t("newScan.advisoryBoundaryNotice")}
+      </p>
       {hasNetworkBoundary ? <fieldset className="mt-5">
         <legend className="text-xs font-medium text-[var(--text-muted)]">
           {t("newScan.boundaryPreset")}
@@ -585,6 +588,9 @@ function ReviewStep({
   return (
     <section>
       <SectionIntro title={t("newScan.reviewTitle")} description={t("newScan.reviewDescription")} />
+      <p className="mt-4 rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 px-4 py-3 text-xs leading-5 text-[var(--text-muted)]">
+        {t("newScan.advisoryBoundaryNotice")}
+      </p>
       <div className="mt-5 divide-y divide-[var(--border)] rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
         <ReviewRow label={t("newScan.primaryTarget")} value={request.target} />
         <ReviewRow

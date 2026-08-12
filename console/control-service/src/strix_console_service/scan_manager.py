@@ -89,6 +89,12 @@ class ProcessAdapter(Protocol):
 
     def terminate(self, scan_id: str) -> bool: ...
 
+    def cleanup(self, scan_id: str, engine_run_name: str) -> bool: ...
+
+    def reconcile(
+        self, scan_id: str, engine_run_name: str, process_id: int | None
+    ) -> bool: ...
+
 
 class StrixProcessAdapter:
     """Start Strix without a shell and control only tracked child handles."""
@@ -100,12 +106,15 @@ class StrixProcessAdapter:
         strix_path: str | None,
         python_path: str | None = None,
         environment: Mapping[str, str] | None = None,
+        stop_grace_seconds: float = 15.0,
     ) -> None:
         self.run_root = run_root.resolve()
         self.strix_path = strix_path
         self.python_path = python_path
         self.base_environment = dict(environment if environment is not None else os.environ)
+        self.stop_grace_seconds = stop_grace_seconds
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._stop_deadlines: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def run(
@@ -133,6 +142,7 @@ class StrixProcessAdapter:
                 shell=False,
                 close_fds=True,
                 creationflags=creation_flags,
+                start_new_session=os.name != "nt",
             )
         except OSError:
             log_handle.close()
@@ -152,6 +162,10 @@ class StrixProcessAdapter:
                 return_code = process.poll()
                 if return_code is not None:
                     return return_code
+                with self._lock:
+                    stop_deadline = self._stop_deadlines.get(record.id)
+                if stop_deadline is not None and time.monotonic() >= stop_deadline:
+                    self.terminate(record.id)
                 if (
                     deadline is not None
                     and not timeout_sent
@@ -165,6 +179,7 @@ class StrixProcessAdapter:
             log_handle.close()
             with self._lock:
                 self._processes.pop(record.id, None)
+                self._stop_deadlines.pop(record.id, None)
 
     def stop(self, scan_id: str) -> bool:
         process = self._tracked_process(scan_id)
@@ -177,17 +192,69 @@ class StrixProcessAdapter:
                 process.send_signal(signal.SIGINT)
         except OSError:
             return False
+        with self._lock:
+            self._stop_deadlines[scan_id] = time.monotonic() + self.stop_grace_seconds
         return True
 
     def terminate(self, scan_id: str) -> bool:
         process = self._tracked_process(scan_id)
         if process is None or process.poll() is not None:
             return False
-        try:
-            process.kill()
-        except OSError:
+        return _kill_process_tree(process.pid, process)
+
+    def cleanup(self, scan_id: str, engine_run_name: str) -> bool:
+        del scan_id
+        return self._remove_console_containers(engine_run_name)
+
+    def reconcile(
+        self, scan_id: str, engine_run_name: str, process_id: int | None
+    ) -> bool:
+        del scan_id
+        process_stopped = process_id is None or not _pid_is_running(process_id)
+        if not process_stopped and process_id is not None:
+            process_stopped = _kill_process_tree(process_id)
+        return process_stopped and self._remove_console_containers(engine_run_name)
+
+    def _remove_console_containers(self, engine_run_name: str) -> bool:
+        docker = shutil.which("docker", path=self.base_environment.get("PATH"))
+        if docker is None:
             return False
-        return True
+        filters = [
+            "--filter",
+            f"label=strix-run-id={engine_run_name}",
+            "--filter",
+            "label=strix-run-type=console",
+        ]
+        try:
+            listed = subprocess.run(  # noqa: S603
+                [docker, "ps", "-aq", *filters],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=self.base_environment,
+            )
+            container_ids = [value for value in listed.stdout.split() if value]
+            if container_ids:
+                subprocess.run(  # noqa: S603
+                    [docker, "rm", "-f", *container_ids],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=self.base_environment,
+                )
+            remaining = subprocess.run(  # noqa: S603
+                [docker, "ps", "-aq", *filters],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=self.base_environment,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return not remaining.stdout.strip()
 
     def _tracked_process(self, scan_id: str) -> subprocess.Popen[bytes] | None:
         with self._lock:
@@ -210,6 +277,8 @@ class StrixProcessAdapter:
                 "--non-interactive",
                 "--scan-mode",
                 request.options.scan_profile,
+                "--run-name",
+                record.engine_run_name,
             ]
         )
         if request.options.termination_policy == "consoleLimits":
@@ -223,6 +292,8 @@ class StrixProcessAdapter:
                 "PYTHONUTF8": "1",
                 "STRIX_LLM": provider.model,
                 "STRIX_RUNS_DIR": str(self.run_root),
+                "STRIX_RUN_ID": record.engine_run_name,
+                "STRIX_RUN_TYPE": "console",
                 "STRIX_TELEMETRY": "false",
             }
         )
@@ -553,7 +624,17 @@ class ScanManager:
                 on_timeout=on_timeout,
             )
         except (OSError, ScanManagerError):
-            self._finish(record, "failed", "processStartFailed")
+            cleanup_ok = self.process_adapter.cleanup(record.id, record.engine_run_name)
+            self._finish(
+                record,
+                "failed",
+                "processStartFailed" if cleanup_ok else "sandboxCleanupFailed",
+            )
+            return
+
+        cleanup_ok = self.process_adapter.cleanup(record.id, record.engine_run_name)
+        if not cleanup_ok:
+            self._finish(record, "failed", "sandboxCleanupFailed")
             return
 
         if record.terminate_requested:
@@ -670,14 +751,15 @@ class ScanManager:
         changed = False
         for record in self._records:
             if record.status in _ACTIVE_STATUSES:
+                cleanup_ok = self.process_adapter.reconcile(
+                    record.id, record.engine_run_name, record.process_id
+                )
                 record.status = "failed"
                 record.error_code = (
-                    "serviceRestartedProcessStillRunning"
-                    if record.process_id and _pid_is_running(record.process_id)
-                    else "serviceRestarted"
+                    "serviceRestarted" if cleanup_ok else "sandboxCleanupFailed"
                 )
                 record.ended_at = datetime.now(UTC)
-                if record.error_code != "serviceRestartedProcessStillRunning":
+                if cleanup_ok:
                     record.process_id = None
                 record.updated_at = datetime.now(UTC)
                 changed = True
@@ -737,6 +819,34 @@ def _pid_is_running(process_id: int) -> bool:
         os.kill(process_id, 0)
     except OSError:
         return False
+    return True
+
+
+def _kill_process_tree(
+    process_id: int, process: subprocess.Popen[bytes] | None = None
+) -> bool:
+    try:
+        if os.name == "nt":
+            taskkill = shutil.which("taskkill")
+            if taskkill is None:
+                return False
+            completed = subprocess.run(  # noqa: S603
+                [taskkill, "/PID", str(process_id), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                timeout=15,
+            )
+            return completed.returncode == 0 or not _pid_is_running(process_id)
+        getpgid = getattr(os, "getpgid")  # noqa: B009 -- absent from Windows stubs
+        killpg = getattr(os, "killpg")  # noqa: B009 -- absent from Windows stubs
+        killpg(getpgid(process_id), getattr(signal, "SIGKILL", 9))
+    except OSError:
+        if process is None:
+            return not _pid_is_running(process_id)
+        try:
+            process.kill()
+        except OSError:
+            return not _pid_is_running(process_id)
     return True
 
 

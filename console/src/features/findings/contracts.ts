@@ -31,6 +31,14 @@ export interface FindingHistoryEntry {
   note: string | null;
 }
 
+export interface FindingExplanationDetails {
+  interfaceOrFeature: string | null;
+  affectedInputs?: string[];
+  prerequisites: string | null;
+  triggerBehavior: string | null;
+  realImpact: string | null;
+}
+
 export interface Finding {
   id: string;
   fingerprintVersion: number;
@@ -47,12 +55,14 @@ export interface Finding {
   remediationSteps: string | null;
   endpoint: string | null;
   method: string | null;
+  affectedInputs?: string[];
   cve: string | null;
   cwe: string | null;
   cvss: number | null;
   locations: FindingLocation[];
   occurrences: FindingOccurrence[];
   history: FindingHistoryEntry[];
+  explanation?: FindingExplanationDetails;
 }
 
 export interface FindingsResponse {
@@ -67,10 +77,18 @@ export type ReportFormat = "html" | "pdf" | "markdown" | "json";
 export interface ExportOptions {
   format: ReportFormat;
   locale: "zh-CN" | "en-US";
+  runId: string;
   findingIds?: string[];
   redaction: {
     omitEvidence: boolean;
     omitPoc: boolean;
     omitPaths: boolean;
   };
+}
+
+export interface ExportResult {
+  filename: string;
+  displayPath: string;
+  runId: string;
+  runName: string | null;
 }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -14,6 +16,7 @@ from strix_console_service.scan_manager import (
     ProcessAdapter,
     ScanManager,
     StrixProcessAdapter,
+    _pid_is_running,
     _ScanRecord,
 )
 
@@ -35,6 +38,9 @@ class BlockingProcessAdapter(ProcessAdapter):
         self.releases: dict[str, threading.Event] = {}
         self.stop_calls: list[str] = []
         self.terminate_calls: list[str] = []
+        self.cleanup_calls: list[tuple[str, str]] = []
+        self.reconcile_calls: list[tuple[str, str, int | None]] = []
+        self.cleanup_result = True
 
     def run(
         self,
@@ -67,6 +73,16 @@ class BlockingProcessAdapter(ProcessAdapter):
             return False
         release.set()
         return True
+
+    def cleanup(self, scan_id: str, engine_run_name: str) -> bool:
+        self.cleanup_calls.append((scan_id, engine_run_name))
+        return self.cleanup_result
+
+    def reconcile(
+        self, scan_id: str, engine_run_name: str, process_id: int | None
+    ) -> bool:
+        self.reconcile_calls.append((scan_id, engine_run_name, process_id))
+        return self.cleanup_result
 
 
 class FailingProcessAdapter(BlockingProcessAdapter):
@@ -171,6 +187,27 @@ def test_safe_stop_and_emergency_termination_are_separate(tmp_path: Path) -> Non
         manager.close()
 
 
+def test_cleanup_failure_overrides_requested_terminal_state(tmp_path: Path) -> None:
+    adapter = BlockingProcessAdapter()
+    adapter.cleanup_result = False
+    manager = ScanManager(
+        state_path=tmp_path / "queue.json",
+        provider_service=_provider(tmp_path),
+        process_adapter=adapter,
+        readiness=lambda: True,
+    )
+    manager.start()
+    try:
+        scan = manager.create(_request(), "cleanup-failure")
+        _wait_for(manager, scan.id, "running")
+        manager.stop(scan.id)
+        failed = _wait_for(manager, scan.id, "failed")
+        assert failed.error_code == "sandboxCleanupFailed"
+        assert adapter.cleanup_calls == [(scan.id, scan.engine_run_name)]
+    finally:
+        manager.close()
+
+
 def test_failed_startup_never_becomes_running(tmp_path: Path) -> None:
     manager = ScanManager(
         state_path=tmp_path / "queue.json",
@@ -224,6 +261,49 @@ def test_restart_reconciles_stale_running_state_to_failure(tmp_path: Path) -> No
         assert scan.status == "failed"
         assert scan.error_code == "serviceRestarted"
         assert scan.process_id is None
+    finally:
+        manager.close()
+
+
+def test_restart_marks_stale_task_failed_when_container_cleanup_fails(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "queue.json"
+    request = _request()
+    state_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "stale-cleanup",
+                    "idempotencyKey": "stale-cleanup-request",
+                    "status": "running",
+                    "request": request.model_dump(mode="json", by_alias=True),
+                    "constraintInstruction": "scope",
+                    "engineRunName": "console-stale-cleanup",
+                    "createdAt": "2026-07-28T02:00:00Z",
+                    "updatedAt": "2026-07-28T02:01:00Z",
+                    "startedAt": "2026-07-28T02:01:00Z",
+                    "processId": 2_147_000_000,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = BlockingProcessAdapter()
+    adapter.cleanup_result = False
+    manager = ScanManager(
+        state_path=state_path,
+        provider_service=_provider(tmp_path),
+        process_adapter=adapter,
+        readiness=lambda: True,
+    )
+
+    manager.start()
+    try:
+        scan = manager.get("stale-cleanup")
+        assert scan is not None
+        assert scan.status == "failed"
+        assert scan.error_code == "sandboxCleanupFailed"
     finally:
         manager.close()
 
@@ -301,7 +381,7 @@ def test_runtime_failures_use_safe_actionable_categories(
     assert manager._classify_failure(record, 1) == expected
 
 
-def test_official_binary_command_does_not_use_custom_run_name_flag(
+def test_official_binary_command_uses_stable_run_identity(
     tmp_path: Path,
 ) -> None:
     executable = tmp_path / "strix.exe"
@@ -334,11 +414,13 @@ def test_official_binary_command_does_not_use_custom_run_name_flag(
         ),
     )
 
-    assert "--run-name" not in command
+    assert command[command.index("--run-name") + 1] == "console-scan-id"
     assert command[command.index("--max-budget-usd") + 1] == "10.0"
     assert command[1:3] == ["--target", "https://example.com"]
     assert environment["PYTHONIOENCODING"] == "utf-8"
     assert environment["PYTHONUTF8"] == "1"
+    assert environment["STRIX_RUN_ID"] == "console-scan-id"
+    assert environment["STRIX_RUN_TYPE"] == "console"
 
     record.request.options.termination_policy = "strixRules"
     strix_command, _environment = adapter._build_command(
@@ -351,6 +433,73 @@ def test_official_binary_command_does_not_use_custom_run_name_flag(
         ),
     )
     assert "--max-budget-usd" not in strix_command
+
+
+def test_safe_stop_escalates_and_kills_an_ignoring_process_tree(tmp_path: Path) -> None:
+    script = tmp_path / "ignore_stop.py"
+    child_pid_path = tmp_path / "child.pid"
+    script.write_text(
+        "import signal, subprocess, sys, time\n"
+        "ignored = getattr(signal, 'SIGBREAK', signal.SIGTERM)\n"
+        "signal.signal(ignored, lambda *_args: None)\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(sys.argv[1], 'w', encoding='utf-8').write(str(child.pid))\n"
+        "while True: time.sleep(1)\n",
+        encoding="utf-8",
+    )
+
+    class IgnoringAdapter(StrixProcessAdapter):
+        def _build_command(
+            self, _record: _ScanRecord, _provider: ProviderRuntime
+        ) -> tuple[list[str], dict[str, str]]:
+            return [sys.executable, str(script), str(child_pid_path)], dict(os.environ)
+
+    adapter = IgnoringAdapter(
+        run_root=tmp_path / "runs",
+        strix_path=sys.executable,
+        stop_grace_seconds=0.15,
+    )
+    record = _ScanRecord.model_validate(
+        {
+            "id": "ignore-stop",
+            "idempotencyKey": "ignore-stop-request",
+            "status": "queued",
+            "request": _request().model_dump(mode="json", by_alias=True),
+            "constraintInstruction": "scope",
+            "engineRunName": "console-ignore-stop",
+            "createdAt": "2026-08-10T00:00:00Z",
+            "updatedAt": "2026-08-10T00:00:00Z",
+        }
+    )
+    parent_pid: list[int] = []
+    worker = threading.Thread(
+        target=lambda: adapter.run(
+            record,
+            ProviderRuntime(
+                provider="openai", model="openai/gpt-5", api_base=None, api_key="secret"
+            ),
+            on_started=parent_pid.append,
+            on_timeout=lambda: None,
+        )
+    )
+    worker.start()
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 3
+        while (not parent_pid or not child_pid_path.exists()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert parent_pid and child_pid_path.exists()
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+
+        assert adapter.stop(record.id)
+        worker.join(timeout=3)
+
+        assert not worker.is_alive()
+        assert not _pid_is_running(parent_pid[0])
+        assert not _pid_is_running(child_pid)
+    finally:
+        adapter.terminate(record.id)
+        worker.join(timeout=3)
 
 
 def test_source_launcher_uses_configured_strix_python(tmp_path: Path) -> None:

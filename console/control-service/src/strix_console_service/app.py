@@ -20,6 +20,7 @@ from strix_console_service.contracts import (
     CreateScanRequest,
     DiagnosticReport,
     ExportFindingsRequest,
+    ExportFindingsResponse,
     Finding,
     FindingsResponse,
     HealthResponse,
@@ -140,7 +141,11 @@ def _build_services(
         provider_service=provider,
         scan_manager=manager,
         event_store=manager.event_store,
-        finding_store=FindingStore(run_indexer, state_root / "findings.json"),
+        finding_store=FindingStore(
+            run_indexer,
+            state_root / "findings.json",
+            run_indexer.default_root.parent / "exports",
+        ),
         update_service=updater,
         audit_log=AuditLog(state_root / "audit.jsonl"),
     )
@@ -541,32 +546,40 @@ def create_app(
         return services.finding_store.list_findings(run_name=scan_result.engine_run_name)
 
     @app.get(
-        "/api/findings",
+        "/api/runs/{run_id}/findings",
         response_model=FindingsResponse,
         dependencies=[Depends(require_access_token)],
     )
-    def findings(run_name: str | None = Query(default=None, max_length=255)) -> FindingsResponse:
-        return services.finding_store.list_findings(run_name=run_name)
+    def run_findings(run_id: str) -> FindingsResponse:
+        if services.run_indexer.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="runNotFound")
+        return services.finding_store.list_findings(run_id=run_id)
 
     @app.get(
-        "/api/findings/{finding_id}",
+        "/api/runs/{run_id}/findings/{finding_id}",
         response_model=Finding,
         dependencies=[Depends(require_access_token)],
     )
-    def finding(finding_id: str) -> Finding:
-        result = services.finding_store.get(finding_id)
+    def run_finding(run_id: str, finding_id: str) -> Finding:
+        if services.run_indexer.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="runNotFound")
+        result = services.finding_store.get(finding_id, run_id=run_id)
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="findingNotFound")
         return result
 
     @app.patch(
-        "/api/findings/{finding_id}",
+        "/api/runs/{run_id}/findings/{finding_id}",
         response_model=Finding,
         dependencies=[Depends(require_access_token)],
     )
-    def update_finding(finding_id: str, request: UpdateFindingRequest) -> Finding:
+    def update_run_finding(
+        run_id: str, finding_id: str, request: UpdateFindingRequest
+    ) -> Finding:
+        if services.run_indexer.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="runNotFound")
         try:
-            return services.finding_store.update(finding_id, request)
+            return services.finding_store.update(finding_id, request, run_id=run_id)
         except FindingStoreError as error:
             code = (
                 status.HTTP_404_NOT_FOUND
@@ -574,6 +587,14 @@ def create_app(
                 else status.HTTP_409_CONFLICT
             )
             raise HTTPException(status_code=code, detail=error.code) from error
+
+    @app.get(
+        "/api/findings",
+        response_model=FindingsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def findings() -> FindingsResponse:
+        return services.finding_store.list_findings()
 
     @app.post(
         "/api/findings/export",
@@ -594,6 +615,45 @@ def create_app(
             media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    @app.post(
+        "/api/findings/export-file",
+        response_model=ExportFindingsResponse,
+        dependencies=[Depends(require_access_token)],
+    )
+    def export_findings_to_file(
+        request: ExportFindingsRequest,
+    ) -> ExportFindingsResponse:
+        try:
+            filename, display_path = services.finding_store.export_to_file(request)
+        except FindingStoreError as error:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error.code == "findingNotFound"
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(status_code=code, detail=error.code) from error
+        return ExportFindingsResponse(
+            filename=filename,
+            display_path=display_path,
+            run_id=request.run_id,
+            run_name=(run.name if (run := services.run_indexer.get_run(request.run_id)) else None),
+        )
+
+    @app.post(
+        "/api/findings/export-folder",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(require_access_token)],
+    )
+    def open_findings_export_folder() -> Response:
+        try:
+            services.finding_store.open_export_folder()
+        except OSError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="exportFolderOpenFailed",
+            ) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get(
         "/api/local-runs",

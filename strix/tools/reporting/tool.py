@@ -182,6 +182,7 @@ async def _do_create(  # noqa: PLR0912
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    affected_inputs: list[str] | None = None,
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
@@ -219,6 +220,13 @@ async def _do_create(  # noqa: PLR0912
                 errors.append(f"Invalid {name}: {value}. Must be one of: {valid}")
 
     parsed_locations = _normalize_code_locations(code_locations)
+    normalized_inputs = list(
+        dict.fromkeys(
+            value.strip()
+            for value in (affected_inputs or [])[:100]
+            if isinstance(value, str) and value.strip()
+        )
+    )
     if parsed_locations:
         errors.extend(_validate_code_locations(parsed_locations))
     if cve:
@@ -265,6 +273,7 @@ async def _do_create(  # noqa: PLR0912
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            "affected_inputs": normalized_inputs,
         }
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
@@ -302,6 +311,7 @@ async def _do_create(  # noqa: PLR0912
             cvss_breakdown=cvss_breakdown,
             endpoint=endpoint,
             method=method,
+            affected_inputs=normalized_inputs,
             cve=cve,
             cwe=cwe,
             code_locations=parsed_locations,
@@ -361,6 +371,7 @@ async def create_vulnerability_report(
     cvss_breakdown: dict[str, str],
     endpoint: str | None = None,
     method: str | None = None,
+    affected_inputs: list[str] | None = None,
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
@@ -567,6 +578,9 @@ async def create_vulnerability_report(
         cvss_breakdown: 8-metric object per the format above.
         endpoint: API path / Git path (e.g. ``/api/login``).
         method: HTTP method when relevant.
+        affected_inputs: Exact vulnerable parameter, field, header, cookie,
+            filename, or other attacker-controlled input names demonstrated by
+            the PoC. Omit when the report evidence does not identify them.
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
@@ -691,6 +705,7 @@ async def create_vulnerability_report(
         cvss_breakdown=cvss_breakdown,
         endpoint=endpoint,
         method=method,
+        affected_inputs=affected_inputs,
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,

@@ -39,10 +39,54 @@ from strix.interface.viewer.transcript import (
 
 
 if TYPE_CHECKING:
+    import socket
     from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
+
+_MAX_REQUEST_BODY = 1024 * 1024
+_READ_TIMEOUT_SECONDS = 15.0
+_MAX_CONCURRENT_REQUESTS = 32
+
+
+class _RequestBodyError(ValueError):
+    def __init__(self, status: HTTPStatus, code: str) -> None:
+        self.status = status
+        self.code = code
+        super().__init__(code)
+
+
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threading server with a hard cap on active request handlers."""
+
+    daemon_threads = True
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._request_slots = threading.BoundedSemaphore(_MAX_CONCURRENT_REQUESTS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request: socket.socket, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.0 503 Service Unavailable\r\n"
+                    b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+            finally:
+                self.close_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: socket.socket, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def bundle_dir() -> Path:
@@ -147,6 +191,10 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
     class ViewerHandler(BaseHTTPRequestHandler):
         server_version = "StrixViewer/1.0"
 
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(_READ_TIMEOUT_SECONDS)
+
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             logger.debug("viewer %s - %s", self.address_string(), format % args)
 
@@ -186,7 +234,9 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._handle_steer()
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
-            except BrokenPipeError:
+            except _RequestBodyError as exc:
+                self._send_json(exc.status, {"error": exc.code})
+            except (BrokenPipeError, ConnectionResetError):
                 logger.debug("viewer client disconnected during POST %s", path)
             except Exception:
                 # A bad request must never kill the worker thread.
@@ -194,8 +244,23 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal error"})
 
         def _read_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length) if length else b""
+            raw_length = self.headers.get("Content-Length")
+            try:
+                length = int(raw_length or 0)
+            except ValueError as exc:
+                raise _RequestBodyError(HTTPStatus.BAD_REQUEST, "invalid_content_length") from exc
+            if length < 0:
+                raise _RequestBodyError(HTTPStatus.BAD_REQUEST, "invalid_content_length")
+            if length > _MAX_REQUEST_BODY:
+                raise _RequestBodyError(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "request_body_too_large"
+                )
+            try:
+                raw = self.rfile.read(length) if length else b""
+            except TimeoutError as exc:
+                raise _RequestBodyError(HTTPStatus.REQUEST_TIMEOUT, "request_timeout") from exc
+            if len(raw) != length:
+                raise _RequestBodyError(HTTPStatus.BAD_REQUEST, "incomplete_request_body")
             try:
                 body = json.loads(raw or b"{}")
             except json.JSONDecodeError:
@@ -583,12 +648,12 @@ def serve(
     handler = _make_handler(state)
 
     try:
-        httpd = ThreadingHTTPServer((host, port), handler)
+        httpd = _BoundedThreadingHTTPServer((host, port), handler)
     except OSError:
         if port == 0:
             raise
         logger.info("viewer port %s unavailable, falling back to an ephemeral port", port)
-        httpd = ThreadingHTTPServer((host, 0), handler)
+        httpd = _BoundedThreadingHTTPServer((host, 0), handler)
 
     httpd.daemon_threads = True
     bound_port = int(httpd.server_address[1])

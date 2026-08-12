@@ -1,11 +1,22 @@
-import { Download, FileJson2, FileText } from "lucide-react";
+import { Download, FileJson2, FileText, FolderOpen } from "lucide-react";
 import { useState } from "react";
 
-import type { ReportFormat } from "../../features/findings/contracts";
-import { exportFindings } from "../../features/findings/findingsClient";
+import type { ExportResult, ReportFormat } from "../../features/findings/contracts";
+import {
+  exportFindings,
+  openExportFolder,
+} from "../../features/findings/findingsClient";
 import { useLocale } from "../../shared/i18n/useLocale";
 
-export function ReportExportPanel({ findingIds = [] }: { findingIds?: string[] }) {
+export function ReportExportPanel({
+  findingIds = [],
+  runId,
+  runName,
+}: {
+  findingIds?: string[];
+  runId: string;
+  runName?: string;
+}) {
   const { locale, t } = useLocale();
   const [format, setFormat] = useState<ReportFormat>("pdf");
   const [reportLocale, setReportLocale] = useState<"zh-CN" | "en-US">(locale);
@@ -13,19 +24,35 @@ export function ReportExportPanel({ findingIds = [] }: { findingIds?: string[] }
   const [omitPoc, setOmitPoc] = useState(true);
   const [omitPaths, setOmitPaths] = useState(true);
   const [state, setState] = useState<"idle" | "busy" | "error">("idle");
+  const [result, setResult] = useState<ExportResult | null>(null);
+  const [openState, setOpenState] = useState<"idle" | "busy" | "error">("idle");
 
   const handleExport = async () => {
     setState("busy");
+    setResult(null);
+    setOpenState("idle");
     try {
-      await exportFindings({
+      const exported = await exportFindings({
         format,
         locale: reportLocale,
+        runId,
         findingIds,
         redaction: { omitEvidence, omitPoc, omitPaths },
       });
+      setResult(exported);
       setState("idle");
     } catch {
       setState("error");
+    }
+  };
+
+  const handleOpenFolder = async () => {
+    setOpenState("busy");
+    try {
+      await openExportFolder();
+      setOpenState("idle");
+    } catch {
+      setOpenState("error");
     }
   };
 
@@ -38,6 +65,11 @@ export function ReportExportPanel({ findingIds = [] }: { findingIds?: string[] }
       <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">
         {t("report.description")}
       </p>
+      {runName ? (
+        <p className="mt-2 break-all text-xs font-semibold text-[var(--text)]">
+          {t("report.taskScope")} {runName}
+        </p>
+      ) : null}
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <label className="grid gap-2 text-xs text-[var(--text-muted)]">
           {t("report.format")}
@@ -102,6 +134,33 @@ export function ReportExportPanel({ findingIds = [] }: { findingIds?: string[] }
         <p className="mt-3 text-xs text-[var(--danger)]" aria-live="polite">
           {t("report.failed")}
         </p>
+      ) : null}
+      {result ? (
+        <div
+          className="mt-4 rounded-xl border border-[var(--success)]/30 bg-[var(--success)]/10 p-3 text-xs"
+          aria-live="polite"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-semibold text-[var(--text)]">{t("report.saved")}</p>
+            <button
+              type="button"
+              onClick={() => void handleOpenFolder()}
+              disabled={openState === "busy"}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 font-semibold text-[var(--text)] transition active:scale-[0.98] disabled:opacity-50"
+            >
+              <FolderOpen className="size-4" />
+              {openState === "busy" ? t("report.openingFolder") : t("report.openFolder")}
+            </button>
+          </div>
+          <p className="mt-1 break-all font-mono text-[var(--text-muted)]">
+            {result.displayPath}
+          </p>
+          {openState === "error" ? (
+            <p className="mt-2 text-[var(--danger)]" aria-live="polite">
+              {t("report.openFolderFailed")}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );

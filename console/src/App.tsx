@@ -16,6 +16,7 @@ import { FindingDetailPage } from "./pages/FindingDetailPage";
 import { FindingsPage } from "./pages/FindingsPage";
 import { LocalRunDetailPage } from "./pages/LocalRunDetailPage";
 import { LocalRunsPage } from "./pages/LocalRunsPage";
+import { LegacyRunFindingsPage } from "./pages/LegacyRunFindingsPage";
 import { NewScanPage } from "./pages/NewScanPage";
 import { ScanDetailPage } from "./pages/ScanDetailPage";
 import { ScansPage } from "./pages/ScansPage";
@@ -38,15 +39,23 @@ export function App() {
   ];
 
   const page = (() => {
+    if (path.startsWith("/findings/task/")) {
+      const [runId, findingId] = path
+        .slice("/findings/task/".length)
+        .split("/")
+        .map(decodeURIComponent);
+      return findingId ? (
+        <FindingDetailPage id={findingId} runId={runId} />
+      ) : (
+        <FindingsPage runId={runId} />
+      );
+    }
     if (path.startsWith("/findings/run/")) {
       return (
-        <FindingsPage
+        <LegacyRunFindingsPage
           runName={decodeURIComponent(path.slice("/findings/run/".length))}
         />
       );
-    }
-    if (path.startsWith("/findings/")) {
-      return <FindingDetailPage id={decodeURIComponent(path.slice("/findings/".length))} />;
     }
     if (path.startsWith("/local-runs/")) {
       return <LocalRunDetailPage id={decodeURIComponent(path.slice("/local-runs/".length))} />;

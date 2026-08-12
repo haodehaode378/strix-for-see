@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import socket
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
@@ -164,6 +167,22 @@ def _get(url: str, *, cookie: str | None = None) -> tuple[int, str, bytes]:
         return resp.status, resp.headers.get("Content-Type", ""), resp.read()
 
 
+def _raw_post(url: str, body: bytes, content_length: str) -> tuple[int, bytes]:
+    parsed = urlsplit(url)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=3)
+    try:
+        connection.putrequest("POST", "/api/event")
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", content_length)
+        connection.endheaders()
+        if body:
+            connection.send(body)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
 def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path, "served", status="completed", end_time="2026-01-01T00:00:00Z")
 
@@ -192,6 +211,51 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
         assert status == 200
         assert b"<div id=root>" in body
     finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_enforces_request_body_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "body-limit", status="completed", end_time="2026-01-01Z")
+    _bundle(tmp_path, monkeypatch)
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    prefix = b'{"event":"ignored","padding":"'
+    suffix = b'"}'
+    boundary_body = prefix + (b"x" * (1024 * 1024 - len(prefix) - len(suffix))) + suffix
+    try:
+        assert _raw_post(url, b"{}", "2")[0] == 204
+        assert _raw_post(url, b"", "invalid")[0] == 400
+        assert _raw_post(url, b"", "-1")[0] == 400
+        assert _raw_post(url, boundary_body, str(len(boundary_body)))[0] == 204
+        assert _raw_post(url, b"", str(1024 * 1024 + 1))[0] == 413
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_server_times_out_slow_request_and_rejects_excess_concurrency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "slow-request", status="completed", end_time="2026-01-01Z")
+    _bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr("strix.interface.viewer.server._MAX_CONCURRENT_REQUESTS", 1)
+    monkeypatch.setattr("strix.interface.viewer.server._READ_TIMEOUT_SECONDS", 0.25)
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    parsed = urlsplit(url)
+    slow = socket.create_connection((str(parsed.hostname), int(parsed.port or 0)), timeout=2)
+    try:
+        slow.sendall(
+            b"POST /api/event HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{"
+        )
+        time.sleep(0.05)
+        assert _get_status(f"{url}/api/run") == 503
+        response = slow.recv(4096)
+        assert b"408 Request Timeout" in response
+    finally:
+        slow.close()
         httpd.shutdown()
         httpd.server_close()
 

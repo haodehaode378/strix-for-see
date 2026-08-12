@@ -5,19 +5,24 @@ import { ReportExportPanel } from "../components/findings/ReportExportPanel";
 import { SeverityBadge } from "../components/ui/SeverityBadge";
 import type { FindingWorkflowState } from "../features/findings/contracts";
 import { updateFinding } from "../features/findings/findingsClient";
-import { findingExplanation } from "../features/findings/findingExplanation";
+import {
+  findingExplanation,
+  findingInputs,
+  findingInterface,
+} from "../features/findings/findingExplanation";
 import { useFinding } from "../features/findings/useFindings";
 import { formatRunDate } from "../features/local-runs/formatRunDate";
 import type { MessageKey } from "../shared/i18n/messages";
 import { useLocale } from "../shared/i18n/useLocale";
 import { NavigationLink } from "../shared/navigation/NavigationLink";
 
-export function FindingDetailPage({ id }: { id: string }) {
+export function FindingDetailPage({ id, runId }: { id: string; runId: string }) {
   const { locale, t } = useLocale();
-  const { finding, setFinding, state } = useFinding(id);
+  const { finding, setFinding, state } = useFinding(id, runId);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const runName = finding?.occurrences[0]?.runName;
 
   if (state === "loading" && !finding) {
     return (
@@ -39,14 +44,20 @@ export function FindingDetailPage({ id }: { id: string }) {
       : finding.workflowState === "confirmed"
         ? ["acceptedRisk", "fixed", "falsePositive"]
         : [];
+  const explanation = findingExplanation(finding);
+  const inputs = findingInputs(finding);
   const save = async (workflowState?: FindingWorkflowState) => {
     setBusy(true);
     setError(false);
     try {
-      const updated = await updateFinding(finding.id, {
-        workflowState,
-        note: note.trim() || undefined,
-      });
+      const updated = await updateFinding(
+        finding.id,
+        {
+          workflowState,
+          note: note.trim() || undefined,
+        },
+        runId,
+      );
       setFinding(updated);
       setNote("");
     } catch {
@@ -59,7 +70,7 @@ export function FindingDetailPage({ id }: { id: string }) {
   return (
     <div>
       <NavigationLink
-        to="/findings"
+        to={runId ? `/findings/task/${encodeURIComponent(runId)}` : "/findings"}
         className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-muted)] hover:text-[var(--text)]"
       >
         <ArrowLeft className="size-4" />
@@ -85,9 +96,26 @@ export function FindingDetailPage({ id }: { id: string }) {
 
       <div className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <main className="min-w-0 space-y-5">
-          <FindingSection
-            title={t("finding.plainExplanation")}
-            value={t(`finding.explanation.${findingExplanation(finding)}` as MessageKey)}
+          <FindingExplanationPanel
+            interfaceOrFeature={findingInterface(finding) ?? t("finding.explanation.interfaceUnknown")}
+            input={
+              inputs.length
+                ? inputs.join(", ")
+                : t("finding.explanation.inputUnknown")
+            }
+            prerequisites={
+              finding.explanation?.prerequisites ??
+              t(`finding.explanation.prerequisites.${explanation}` as MessageKey)
+            }
+            trigger={
+              finding.explanation?.triggerBehavior ??
+              t(`finding.explanation.trigger.${explanation}` as MessageKey)
+            }
+            impact={
+              finding.explanation?.realImpact
+                ? `${t(`finding.explanation.${explanation}` as MessageKey)}\n\n${t("finding.explanation.sourceImpact")} ${finding.explanation.realImpact}`
+                : t(`finding.explanation.${explanation}` as MessageKey)
+            }
           />
           <FindingSection title={t("finding.description")} value={finding.description} />
           <FindingSection title={t("finding.evidence")} value={finding.evidence} code />
@@ -230,10 +258,52 @@ export function FindingDetailPage({ id }: { id: string }) {
               ))}
             </div>
           </section>
-          <ReportExportPanel findingIds={[finding.id]} />
+          <ReportExportPanel
+            findingIds={[finding.id]}
+            runId={runId}
+            runName={runName}
+          />
         </aside>
       </div>
     </div>
+  );
+}
+
+function FindingExplanationPanel({
+  interfaceOrFeature,
+  input,
+  prerequisites,
+  trigger,
+  impact,
+}: {
+  interfaceOrFeature: string;
+  input: string;
+  prerequisites: string;
+  trigger: string;
+  impact: string;
+}) {
+  const { t } = useLocale();
+  const rows = [
+    [t("finding.explanation.interface"), interfaceOrFeature],
+    [t("finding.explanation.input"), input],
+    [t("finding.explanation.prerequisites"), prerequisites],
+    [t("finding.explanation.trigger"), trigger],
+    [t("finding.explanation.realImpact"), impact],
+  ];
+  return (
+    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="text-sm font-semibold">{t("finding.plainExplanation")}</h2>
+      <dl className="mt-4 divide-y divide-[var(--border)]">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid gap-2 py-3 sm:grid-cols-[150px_1fr]">
+            <dt className="text-xs font-semibold text-[var(--text)]">{label}</dt>
+            <dd className="whitespace-pre-wrap text-sm leading-6 text-[var(--text-muted)]">
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 

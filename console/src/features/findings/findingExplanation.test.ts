@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Finding } from "./contracts";
-import { findingExplanation } from "./findingExplanation";
+import {
+  findingExplanation,
+  findingInputs,
+  findingInterface,
+} from "./findingExplanation";
 
 const finding: Finding = {
   id: "finding-1",
@@ -37,5 +41,14 @@ describe("findingExplanation", () => {
       "sqlInjection",
     );
     expect(findingExplanation({ ...finding, cwe: null })).toBe("generic");
+  });
+
+  it("uses recorded endpoint data without inventing missing inputs", () => {
+    expect(
+      findingInterface({ ...finding, method: "post", endpoint: "/profile?tab=bio&lang=zh" }),
+    ).toBe("POST /profile?tab=bio&lang=zh");
+    expect(findingInputs({ ...finding, endpoint: "/profile?tab=bio&lang=zh" })).toEqual([]);
+    expect(findingInputs({ ...finding, affectedInputs: ["bio"] })).toEqual(["bio"]);
+    expect(findingInputs(finding)).toEqual([]);
   });
 });

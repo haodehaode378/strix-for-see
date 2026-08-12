@@ -98,7 +98,7 @@ describe("FindingsPage", () => {
 
     expect(screen.getByRole("link", { name: /run-one/ })).toHaveAttribute(
       "href",
-      "/findings/run/run-one",
+      "/findings/task/run-one",
     );
     expect(screen.getByRole("link", { name: /run-two/ })).toBeInTheDocument();
     expect(screen.queryByText("Stored <script>alert(1)</script>")).not.toBeInTheDocument();

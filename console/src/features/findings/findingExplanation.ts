@@ -42,3 +42,22 @@ export function findingExplanation(finding: Finding): FindingExplanation {
     .join(" ");
   return titlePatterns.find(([pattern]) => pattern.test(searchable))?.[1] ?? "generic";
 }
+
+export function findingInterface(finding: Finding): string | null {
+  if (finding.explanation?.interfaceOrFeature?.trim()) {
+    return finding.explanation.interfaceOrFeature.trim();
+  }
+  const endpoint = finding.endpoint?.trim();
+  if (endpoint) {
+    return [finding.method?.trim().toUpperCase(), endpoint].filter(Boolean).join(" ");
+  }
+  const location = finding.locations.find((item) => item.label || item.file);
+  return location?.label?.trim() || location?.file?.trim() || finding.target?.trim() || null;
+}
+
+export function findingInputs(finding: Finding): string[] {
+  const values = finding.explanation?.affectedInputs?.length
+    ? finding.explanation.affectedInputs
+    : (finding.affectedInputs ?? []);
+  return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
+}
