@@ -98,6 +98,32 @@ class FailingProcessAdapter(BlockingProcessAdapter):
         raise OSError("launch failed")
 
 
+class FindingsProcessAdapter(BlockingProcessAdapter):
+    def __init__(self, run_root: Path, run_status: str) -> None:
+        super().__init__()
+        self.run_root = run_root
+        self.run_status = run_status
+
+    def run(
+        self,
+        record: _ScanRecord,
+        provider: ProviderRuntime,
+        *,
+        on_started: Callable[[int], None],
+        on_timeout: Callable[[], None],
+    ) -> int:
+        del provider, on_timeout
+        self.started.append(record.id)
+        on_started(1000 + len(self.started))
+        run_path = self.run_root / record.engine_run_name
+        run_path.mkdir(parents=True)
+        (run_path / "run.json").write_text(
+            json.dumps({"status": self.run_status}),
+            encoding="utf-8",
+        )
+        return 2
+
+
 def _provider(tmp_path: Path) -> ProviderService:
     config_path = tmp_path / "provider.json"
     config_path.write_text(
@@ -221,6 +247,85 @@ def test_failed_startup_never_becomes_running(tmp_path: Path) -> None:
         failed = _wait_for(manager, scan.id, "failed")
         assert failed.started_at is None
         assert failed.error_code == "processStartFailed"
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize(
+    ("run_status", "expected_status", "expected_error"),
+    [
+        ("completed", "completed", None),
+        ("failed", "failed", "processExit2"),
+    ],
+)
+def test_exit_code_two_requires_completed_run_record(
+    tmp_path: Path,
+    run_status: str,
+    expected_status: str,
+    expected_error: str | None,
+) -> None:
+    run_root = tmp_path / "runs"
+    manager = ScanManager(
+        state_path=tmp_path / "queue.json",
+        provider_service=_provider(tmp_path),
+        process_adapter=FindingsProcessAdapter(run_root, run_status),
+        readiness=lambda: True,
+        run_root=run_root,
+    )
+    manager.start()
+    try:
+        scan = manager.create(_request(), f"exit-two-{run_status}")
+        terminal = _wait_for(manager, scan.id, expected_status)
+        assert terminal.error_code == expected_error
+    finally:
+        manager.close()
+
+
+def test_restart_corrects_completed_scan_previously_mapped_to_exit_two(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "queue.json"
+    request = _request()
+    state_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "completed-findings",
+                    "idempotencyKey": "completed-findings-request",
+                    "status": "failed",
+                    "request": request.model_dump(mode="json", by_alias=True),
+                    "constraintInstruction": "scope",
+                    "engineRunName": "console-completed-findings",
+                    "createdAt": "2026-08-12T07:00:00Z",
+                    "updatedAt": "2026-08-12T07:41:00Z",
+                    "startedAt": "2026-08-12T07:01:00Z",
+                    "endedAt": "2026-08-12T07:41:00Z",
+                    "errorCode": "processExit2",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    run_path = tmp_path / "runs" / "console-completed-findings"
+    run_path.mkdir(parents=True)
+    (run_path / "run.json").write_text(
+        json.dumps({"status": "completed"}),
+        encoding="utf-8",
+    )
+    manager = ScanManager(
+        state_path=state_path,
+        provider_service=_provider(tmp_path),
+        process_adapter=BlockingProcessAdapter(),
+        readiness=lambda: True,
+        run_root=tmp_path / "runs",
+    )
+
+    manager.start()
+    try:
+        scan = manager.get("completed-findings")
+        assert scan is not None
+        assert scan.status == "completed"
+        assert scan.error_code is None
     finally:
         manager.close()
 

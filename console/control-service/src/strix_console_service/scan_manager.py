@@ -641,7 +641,9 @@ class ScanManager:
             self._finish(record, "terminated", None)
         elif record.stop_requested:
             self._finish(record, "stopped", record.error_code)
-        elif return_code == 0:
+        elif return_code == 0 or (
+            return_code == 2 and self._run_completed(record)
+        ):
             self._finish(record, "completed", None)
         else:
             error_code = self._classify_failure(record, return_code)
@@ -734,6 +736,16 @@ class ScanManager:
                 return "dockerUnavailable"
         return "processExitedBySignal" if return_code < 0 else f"processExit{return_code}"
 
+    def _run_completed(self, record: _ScanRecord) -> bool:
+        if self.run_root is None:
+            return False
+        run_record = self.run_root / record.engine_run_name / "run.json"
+        try:
+            payload = json.loads(run_record.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        return isinstance(payload, dict) and payload.get("status") == "completed"
+
     def _persist(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.state_path.with_suffix(".tmp")
@@ -750,7 +762,17 @@ class ScanManager:
     def _reconcile_restart(self) -> None:
         changed = False
         for record in self._records:
-            if record.status in _ACTIVE_STATUSES:
+            if (
+                record.status == "failed"
+                and record.error_code == "processExit2"
+                and self._run_completed(record)
+            ):
+                record.status = "completed"
+                record.error_code = None
+                record.process_id = None
+                record.updated_at = datetime.now(UTC)
+                changed = True
+            elif record.status in _ACTIVE_STATUSES:
                 cleanup_ok = self.process_adapter.reconcile(
                     record.id, record.engine_run_name, record.process_id
                 )

@@ -1,6 +1,6 @@
 [package]
 name = "strix-console"
-version = "0.1.9"
+version = "0.1.10"
 description = "Local control and observability console for Strix"
 authors = ["Strix Console contributors"]
 edition = "2024"
