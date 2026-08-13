@@ -6,9 +6,12 @@ import type {
   ExportOptions,
   ExportResult,
   Finding,
+  FindingTranslation,
   FindingsResponse,
   FindingWorkflowState,
 } from "./contracts";
+
+const translationCache = new Map<string, FindingTranslation>();
 
 export function getFindings(
   runId?: string,
@@ -42,6 +45,21 @@ export function updateFinding(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(update),
   });
+}
+
+export async function getFindingTranslation(
+  id: string,
+  runId: string,
+): Promise<FindingTranslation> {
+  const cacheKey = `${runId}:${id}`;
+  const cached = translationCache.get(cacheKey);
+  if (cached) return cached;
+  const path = `/api/runs/${encodeURIComponent(runId)}/findings/${encodeURIComponent(id)}/translation`;
+  const translation = await controlServiceJson<FindingTranslation>(path, {
+    method: "POST",
+  });
+  translationCache.set(cacheKey, translation);
+  return translation;
 }
 
 export function exportFindings(options: ExportOptions): Promise<ExportResult> {

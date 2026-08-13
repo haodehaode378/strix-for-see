@@ -23,6 +23,7 @@ from strix_console_service.contracts import (
     ExportFindingsResponse,
     Finding,
     FindingsResponse,
+    FindingTranslation,
     HealthResponse,
     LocalRunsResponse,
     LocalRunSummary,
@@ -567,6 +568,37 @@ def create_app(
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="findingNotFound")
         return result
+
+    @app.post(
+        "/api/runs/{run_id}/findings/{finding_id}/translation",
+        response_model=FindingTranslation,
+        dependencies=[Depends(require_access_token)],
+    )
+    def translate_run_finding(run_id: str, finding_id: str) -> FindingTranslation:
+        if services.run_indexer.get_run(run_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="runNotFound")
+        finding = services.finding_store.get(finding_id, run_id=run_id)
+        if finding is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="findingNotFound")
+        explanation = finding.explanation
+        fields = {
+            "title": finding.title,
+            "description": finding.description or "",
+            "impact": finding.impact or "",
+            "technical_analysis": finding.technical_analysis or "",
+            "remediation_steps": finding.remediation_steps or "",
+            "interface_or_feature": explanation.interface_or_feature or "",
+            "prerequisites": explanation.prerequisites or "",
+            "trigger_behavior": explanation.trigger_behavior or "",
+            "real_impact": explanation.real_impact or "",
+        }
+        try:
+            return services.provider_service.translate_to_chinese(fields)
+        except ProviderConfigurationError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error.code,
+            ) from error
 
     @app.patch(
         "/api/runs/{run_id}/findings/{finding_id}",

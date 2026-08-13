@@ -128,7 +128,7 @@ export function FindingsPage({ runId, runName: legacyRunName }: { runId?: string
             ))}
           </section>
 
-          <section className="mt-5 grid gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-4">
+          <section className="mt-5 grid gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:grid-cols-2 xl:grid-cols-4">
             <FilterSelect
               label={t("findings.filterSeverity")}
               value={severity}
@@ -160,7 +160,7 @@ export function FindingsPage({ runId, runName: legacyRunName }: { runId?: string
                 ...targets.map((item) => [item as string, item as string] as [string, string]),
               ]}
             />
-            <label className="grid gap-2 text-xs text-[var(--text-muted)]">
+            <label className="grid min-w-0 gap-2 text-xs text-[var(--text-muted)]">
               {t("findings.filterDate")}
               <input
                 type="date"
@@ -168,7 +168,7 @@ export function FindingsPage({ runId, runName: legacyRunName }: { runId?: string
                 onChange={(event) =>
                   setFilter("from", event.target.value, setDateFrom)
                 }
-                className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5 text-sm text-[var(--text)]"
+                className="w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5 text-sm text-[var(--text)]"
               />
             </label>
           </section>
@@ -309,12 +309,12 @@ function FilterSelect({
   options: Array<[string, string]>;
 }) {
   return (
-    <label className="grid gap-2 text-xs text-[var(--text-muted)]">
+    <label className="grid min-w-0 gap-2 text-xs text-[var(--text-muted)]">
       {label}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5 text-sm text-[var(--text)]"
+        className="w-full min-w-0 max-w-full rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5 text-sm text-[var(--text)]"
       >
         {options.map(([option, labelText]) => (
           <option key={option} value={option}>

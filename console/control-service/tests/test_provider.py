@@ -150,3 +150,48 @@ def test_model_discovery_uses_custom_anthropic_base_without_persisting_key(
     assert captured[0].headers["X-api-key"] == "write-only-key"
     assert store.values == {}
     assert not (tmp_path / "provider.json").exists()
+
+
+def test_translation_sends_only_supplied_prose_and_parses_json(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    store = MemoryCredentialStore()
+    service = ProviderService(config_path=tmp_path / "provider.json", credential_store=store)
+    service.configure(
+        ProviderConfigRequest(
+            provider="openaiCompatible",
+            model="deepseek-chat",
+            api_base="https://api.example.com/v1",
+            api_key="secret-key",
+        )
+    )
+    captured: list[urllib.request.Request] = []
+
+    class TranslationResponse:
+        def __enter__(self) -> TranslationResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limit: int) -> bytes:
+            content = json.dumps({"description": "需要普通用户权限。"})
+            return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+    def open_request(request: urllib.request.Request, **_kwargs: object) -> TranslationResponse:
+        captured.append(request)
+        return TranslationResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_request)
+
+    result = service.translate_to_chinese({"description": "Requires a normal user."})
+
+    assert result.description == "需要普通用户权限。"
+    request = captured[0]
+    assert request.full_url == "https://api.example.com/v1/chat/completions"
+    assert request.headers["Authorization"] == "Bearer secret-key"
+    body = json.loads(request.data or b"{}")
+    assert body["model"] == "deepseek-chat"
+    assert "Requires a normal user." in body["messages"][1]["content"]
+    assert "evidence" not in body["messages"][1]["content"]

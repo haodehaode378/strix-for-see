@@ -13,6 +13,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 from strix_console_service.contracts import (
+    FindingTranslation,
     ProviderConfigRequest,
     ProviderKind,
     ProviderModelsRequest,
@@ -260,6 +261,33 @@ class ProviderService:
             raise ProviderConfigurationError("invalidProviderResponse") from error
         return ProviderModelsResponse(models=_extract_model_ids(request.provider, payload))
 
+    def translate_to_chinese(self, fields: dict[str, str]) -> FindingTranslation:
+        """Translate bounded finding prose without sending evidence, PoCs, or paths."""
+
+        runtime = self.runtime()
+        if runtime is None:
+            raise ProviderConfigurationError("notConfigured")
+        source = {key: value for key, value in fields.items() if value.strip()}
+        if sum(len(value) for value in source.values()) > 40_000:
+            raise ProviderConfigurationError("translationTooLarge")
+        if not source:
+            return FindingTranslation()
+        request = _translation_request(runtime, source)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+                payload = json.loads(response.read(1_048_577))
+            translated = _extract_translation(runtime.provider, payload)
+            return FindingTranslation.model_validate(
+                {key: value for key, value in translated.items() if key in source}
+            )
+        except urllib.error.HTTPError as error:
+            code = "authenticationFailed" if error.code in {401, 403} else "providerRejected"
+            raise ProviderConfigurationError(code) from error
+        except (OSError, urllib.error.URLError, TimeoutError) as error:
+            raise ProviderConfigurationError("connectionFailed") from error
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise ProviderConfigurationError("invalidProviderResponse") from error
+
     def _read_metadata(self) -> _ProviderMetadata | None:
         if not self.config_path.is_file():
             return None
@@ -396,3 +424,85 @@ def _extract_model_ids(provider: ProviderKind, payload: object) -> list[str]:
         if len(models) == 200:
             break
     return sorted(models, key=str.casefold)
+
+
+def _translation_request(
+    runtime: ProviderRuntime, fields: dict[str, str]
+) -> urllib.request.Request:
+    instruction = (
+        "Translate every JSON string value into clear Simplified Chinese for a security report. "
+        "Preserve URLs, HTTP methods, identifiers, CVE/CWE numbers, parameter names, and code. "
+        "Return only one JSON object with exactly the same keys; do not add analysis or markdown."
+    )
+    model = runtime.model.split("/", 1)[-1]
+    source = json.dumps(fields, ensure_ascii=False)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if runtime.provider == "anthropic":
+        base = runtime.api_base or "https://api.anthropic.com/v1"
+        endpoint = f"{base}/messages"
+        headers["x-api-key"] = runtime.api_key or ""
+        headers["anthropic-version"] = "2023-06-01"
+        body = {
+            "model": model,
+            "max_tokens": 4096,
+            "system": instruction,
+            "messages": [{"role": "user", "content": source}],
+        }
+    elif runtime.provider == "gemini":
+        base = runtime.api_base or "https://generativelanguage.googleapis.com/v1beta"
+        endpoint = f"{base}/models/{model}:generateContent"
+        headers["x-goog-api-key"] = runtime.api_key or ""
+        body = {
+            "systemInstruction": {"parts": [{"text": instruction}]},
+            "contents": [{"role": "user", "parts": [{"text": source}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        }
+    else:
+        base = runtime.api_base or "https://api.openai.com/v1"
+        endpoint = f"{base}/chat/completions"
+        if runtime.api_key:
+            headers["Authorization"] = f"Bearer {runtime.api_key}"
+        body = {
+            "model": model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": instruction},
+                {"role": "user", "content": source},
+            ],
+        }
+    return urllib.request.Request(  # noqa: S310
+        endpoint,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+
+
+def _extract_translation(provider: ProviderKind, payload: object) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid translation response")
+    if provider == "anthropic":
+        content = payload.get("content")
+        text = content[0].get("text") if isinstance(content, list) and content else None
+    elif provider == "gemini":
+        candidates = payload.get("candidates")
+        candidate = candidates[0] if isinstance(candidates, list) and candidates else None
+        content = candidate.get("content") if isinstance(candidate, dict) else None
+        parts = content.get("parts") if isinstance(content, dict) else None
+        text = parts[0].get("text") if isinstance(parts, list) and parts else None
+    else:
+        choices = payload.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else None
+        message = choice.get("message") if isinstance(choice, dict) else None
+        text = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(text, str):
+        raise ValueError("missing translation content")
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        normalized = normalized.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    result = json.loads(normalized)
+    if not isinstance(result, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in result.items()
+    ):
+        raise ValueError("invalid translated fields")
+    return result

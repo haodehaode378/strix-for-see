@@ -394,6 +394,20 @@ class UpdateFindingRequest(CamelModel):
     note: str | None = Field(default=None, min_length=1, max_length=4000)
 
 
+class FindingTranslation(CamelModel):
+    """Chinese translations of descriptive fields; exploit evidence is intentionally excluded."""
+
+    title: str | None = None
+    description: str | None = None
+    impact: str | None = None
+    technical_analysis: str | None = None
+    remediation_steps: str | None = None
+    interface_or_feature: str | None = None
+    prerequisites: str | None = None
+    trigger_behavior: str | None = None
+    real_impact: str | None = None
+
+
 ReportFormat = Literal["html", "pdf", "markdown", "json"]
 ReportLocale = Literal["zh-CN", "en-US"]
 

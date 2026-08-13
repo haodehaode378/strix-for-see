@@ -1,10 +1,10 @@
-import { ArrowLeft, CheckCircle2, FileWarning, History, MapPin } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileWarning, History, Languages, MapPin } from "lucide-react";
 import { useState } from "react";
 
 import { ReportExportPanel } from "../components/findings/ReportExportPanel";
 import { SeverityBadge } from "../components/ui/SeverityBadge";
-import type { FindingWorkflowState } from "../features/findings/contracts";
-import { updateFinding } from "../features/findings/findingsClient";
+import type { FindingTranslation, FindingWorkflowState } from "../features/findings/contracts";
+import { getFindingTranslation, updateFinding } from "../features/findings/findingsClient";
 import {
   findingExplanation,
   findingInputs,
@@ -22,6 +22,10 @@ export function FindingDetailPage({ id, runId }: { id: string; runId: string }) 
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const [translation, setTranslation] = useState<FindingTranslation | null>(null);
+  const [translationBusy, setTranslationBusy] = useState(false);
+  const [translationError, setTranslationError] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const runName = finding?.occurrences[0]?.runName;
 
   if (state === "loading" && !finding) {
@@ -66,6 +70,24 @@ export function FindingDetailPage({ id, runId }: { id: string; runId: string }) 
       setBusy(false);
     }
   };
+  const toggleTranslation = async () => {
+    if (translation) {
+      setShowTranslation((current) => !current);
+      return;
+    }
+    setTranslationBusy(true);
+    setTranslationError(false);
+    try {
+      const result = await getFindingTranslation(finding.id, runId);
+      setTranslation(result);
+      setShowTranslation(true);
+    } catch {
+      setTranslationError(true);
+    } finally {
+      setTranslationBusy(false);
+    }
+  };
+  const translated = showTranslation ? translation : null;
 
   return (
     <div>
@@ -87,7 +109,7 @@ export function FindingDetailPage({ id, runId }: { id: string; runId: string }) 
           ) : null}
         </div>
         <h1 className="mt-4 max-w-4xl text-2xl font-semibold tracking-tight sm:text-3xl">
-          {finding.title}
+          {translated?.title ?? finding.title}
         </h1>
         <p className="mt-3 break-all font-mono text-xs text-[var(--text-muted)]">
           {[finding.method, finding.endpoint, finding.target].filter(Boolean).join(" · ") || "—"}
@@ -96,33 +118,59 @@ export function FindingDetailPage({ id, runId }: { id: string; runId: string }) 
 
       <div className="mt-7 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <main className="min-w-0 space-y-5">
+          <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{t("finding.translation.title")}</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+                {t("finding.translation.privacy")}
+              </p>
+              {translationError ? (
+                <p className="mt-2 text-xs text-[var(--danger)]" aria-live="polite">
+                  {t("finding.translation.failed")}
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={translationBusy}
+              onClick={() => void toggleTranslation()}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[var(--border)] px-3 py-2 text-xs font-semibold transition active:scale-[0.98] disabled:opacity-50"
+            >
+              <Languages className="size-4" />
+              {translationBusy
+                ? t("finding.translation.loading")
+                : showTranslation
+                  ? t("finding.translation.original")
+                  : t("finding.translation.chinese")}
+            </button>
+          </section>
           <FindingExplanationPanel
-            interfaceOrFeature={findingInterface(finding) ?? t("finding.explanation.interfaceUnknown")}
+            interfaceOrFeature={translated?.interfaceOrFeature ?? findingInterface(finding) ?? t("finding.explanation.interfaceUnknown")}
             input={
               inputs.length
                 ? inputs.join(", ")
                 : t("finding.explanation.inputUnknown")
             }
             prerequisites={
-              finding.explanation?.prerequisites ??
+              translated?.prerequisites ?? finding.explanation?.prerequisites ??
               t(`finding.explanation.prerequisites.${explanation}` as MessageKey)
             }
             trigger={
-              finding.explanation?.triggerBehavior ??
+              translated?.triggerBehavior ?? finding.explanation?.triggerBehavior ??
               t(`finding.explanation.trigger.${explanation}` as MessageKey)
             }
             impact={
-              finding.explanation?.realImpact
-                ? `${t(`finding.explanation.${explanation}` as MessageKey)}\n\n${t("finding.explanation.sourceImpact")} ${finding.explanation.realImpact}`
+              (translated?.realImpact ?? finding.explanation?.realImpact)
+                ? `${t(`finding.explanation.${explanation}` as MessageKey)}\n\n${t("finding.explanation.sourceImpact")} ${translated?.realImpact ?? finding.explanation?.realImpact}`
                 : t(`finding.explanation.${explanation}` as MessageKey)
             }
           />
-          <FindingSection title={t("finding.description")} value={finding.description} />
+          <FindingSection title={t("finding.description")} value={translated?.description ?? finding.description} />
           <FindingSection title={t("finding.evidence")} value={finding.evidence} code />
-          <FindingSection title={t("finding.impact")} value={finding.impact} />
+          <FindingSection title={t("finding.impact")} value={translated?.impact ?? finding.impact} />
           <FindingSection
             title={t("finding.analysis")}
-            value={finding.technicalAnalysis}
+            value={translated?.technicalAnalysis ?? finding.technicalAnalysis}
           />
           <FindingSection title={t("finding.poc")} value={finding.pocDescription} />
           <FindingSection
@@ -132,7 +180,7 @@ export function FindingDetailPage({ id, runId }: { id: string; runId: string }) 
           />
           <FindingSection
             title={t("finding.remediation")}
-            value={finding.remediationSteps}
+            value={translated?.remediationSteps ?? finding.remediationSteps}
           />
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
             <h2 className="flex items-center gap-2 text-sm font-semibold">

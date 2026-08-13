@@ -72,6 +72,18 @@ export interface FindingsResponse {
   severityCounts: Record<FindingSeverity, number>;
 }
 
+export interface FindingTranslation {
+  title: string | null;
+  description: string | null;
+  impact: string | null;
+  technicalAnalysis: string | null;
+  remediationSteps: string | null;
+  interfaceOrFeature: string | null;
+  prerequisites: string | null;
+  triggerBehavior: string | null;
+  realImpact: string | null;
+}
+
 export type ReportFormat = "html" | "pdf" | "markdown" | "json";
 
 export interface ExportOptions {
